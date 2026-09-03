@@ -825,6 +825,7 @@ class TestParsingAgainstAnAdapter:
             {"extension": ["httpfs", "spatial"]},
             {"limit": 100, "conn_str": ["my.db"]},  # keys a command owns
             {"theme": "fruity", "keymap_name": ["vscode"]},  # keys the IDE owns
+            {"catalog_side": "right"},  # a fork key the IDE owns; hsql drops it
         ],
     )
     def test_what_a_profile_may_hold(self, profile: Profile) -> None:

@@ -134,6 +134,7 @@ TUI_ONLY_KEYS = (
     "locale",
     "no_download_tzdata",
     "viewer_max_rows",
+    "catalog_side",
 )
 """Profile keys the IDE reads and a headless caller must drop.
 

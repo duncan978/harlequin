@@ -139,6 +139,7 @@ def test_default(
         theme=DEFAULT_THEME,
         show_files=None,
         show_s3=None,
+        catalog_side="left",
         export_path=None,
         ssh_tunnel=None,
     )

@@ -312,6 +312,9 @@
         },
         "viewer_max_rows": {
           "description": "Read by the harlequin IDE; hsql ignores it. See `harlequin --help`."
+        },
+        "catalog_side": {
+          "description": "Read by the harlequin IDE; hsql ignores it. See `harlequin --help`."
         }
       }
     },
