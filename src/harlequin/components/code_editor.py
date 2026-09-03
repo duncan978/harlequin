@@ -25,6 +25,7 @@ from harlequin.autocomplete import (
     find_symbols,
 )
 from harlequin.components.text_modal import ErrorModal
+from harlequin.components.rename_modal import RenameModal
 from harlequin.editor_cache import BufferState, load_cache
 from harlequin.exception import HarlequinExternalError
 from harlequin.external import launch_external_editor
@@ -334,6 +335,10 @@ class EditorCollection(Vertical):
         self._buffer_symbols: BufferSymbols = NO_SYMBOLS
         self.startup_cache = load_cache()
         self.buffer_states: dict[str, EditorState] = {}
+        # kept beside the states rather than inside them: `_save_loaded_buffer`
+        # replaces a state wholesale on every tab switch, which would take the
+        # name with it.
+        self.buffer_names: dict[str, str] = {}
         self.loaded_buffer_id: str | None = None
         self.tabs = Tabs()
         self.tabs.can_focus = False
@@ -362,8 +367,12 @@ class EditorCollection(Vertical):
         """The state of every buffer, in tab order, for the editor cache."""
         self._save_loaded_buffer()
         return [
-            BufferState(selection=state.selection, text=state.text)
-            for state in self.buffer_states.values()
+            BufferState(
+                selection=state.selection,
+                text=state.text,
+                name=self.buffer_names.get(buffer_id),
+            )
+            for buffer_id, state in self.buffer_states.items()
         ]
 
     @property
@@ -453,7 +462,10 @@ class EditorCollection(Vertical):
             if state is not None
             else EditorState()
         )
-        await self.tabs.add_tab(Tab(f"Tab {self.counter}", id=new_buffer_id))
+        name = getattr(state, "name", None) if state is not None else None
+        if name:
+            self.buffer_names[new_buffer_id] = name
+        await self.tabs.add_tab(Tab(name or f"Tab {self.counter}", id=new_buffer_id))
         if activate:
             # adding the first tab activates it; any later tab has to be
             # activated here to swap its state into the editor.
@@ -473,10 +485,43 @@ class EditorCollection(Vertical):
             self.loaded_buffer_id = None
             if closed_buffer_id is not None:
                 self.buffer_states.pop(closed_buffer_id, None)
+                self.buffer_names.pop(closed_buffer_id, None)
                 self.tabs.remove_tab(closed_buffer_id)
         else:
             self.editor.load_state(EditorState())
         self.editor.focus()
+
+    def action_rename_buffer(self) -> None:
+        """Give the active buffer a name of your own.
+
+        The name rides along in the editor cache, so the tabs you left open are
+        the tabs you come back to, still labelled.
+        """
+        buffer_id = self.active
+        if buffer_id is None:
+            return
+
+        def apply(name: str | None) -> None:
+            if name is None:
+                return
+            if name:
+                self.buffer_names[buffer_id] = name
+            else:
+                self.buffer_names.pop(buffer_id, None)
+            tab = self.tabs.query_one(f"#{buffer_id}", Tab)
+            number = buffer_id.rpartition("-")[2]
+            tab.label = name or f"Tab {number}"
+            if self.tab_count > 1 or self.buffer_names:
+                self.remove_class("hide-tabs")
+            self.editor.focus()
+
+        self.app.push_screen(
+            RenameModal(
+                prompt="Name this query tab:",
+                current=self.buffer_names.get(buffer_id, ""),
+            ),
+            apply,
+        )
 
     def action_next_buffer(self) -> None:
         if self.tab_count < 2:

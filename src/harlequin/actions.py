@@ -98,6 +98,9 @@ HARLEQUIN_ACTIONS = {
     # CodeEditor ACTIONS
     #######################################################
     "code_editor.new_buffer": Action(target=EditorCollection, action="new_buffer"),
+    "code_editor.rename_buffer": Action(
+        target=EditorCollection, action="rename_buffer", description="Rename Tab"
+    ),
     "code_editor.close_buffer": Action(target=EditorCollection, action="close_buffer"),
     "code_editor.next_buffer": Action(target=EditorCollection, action="next_buffer"),
     "code_editor.run_query": Action(
@@ -256,6 +259,15 @@ HARLEQUIN_ACTIONS = {
     ),
     "results_viewer.next_tab": Action(
         target=ResultsViewer, action="switch_tab(1)", description="Next Tab"
+    ),
+    "results_viewer.rename_tab": Action(
+        target=ResultsViewer, action="rename_tab", description="Rename Tab"
+    ),
+    "results_viewer.pin_tab": Action(
+        target=ResultsViewer, action="toggle_pin", description="Pin/Unpin Tab"
+    ),
+    "results_viewer.close_tab": Action(
+        target=ResultsViewer, action="close_tab", description="Close Tab"
     ),
     "results_viewer.copy_selection": Action(
         target=ResultsTable, action="copy_selection"

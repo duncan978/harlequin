@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +15,13 @@ CACHE_VERSION = 1
 class BufferState:
     selection: Selection
     text: str
+    name: str | None = None
+    """What the user called this tab, or None for the default `Tab n`.
+
+    Defaulted so a cache written before names existed still unpickles: the
+    dataclass default is a class attribute, which a restored instance without
+    the key falls back to.
+    """
 
 
 @dataclass

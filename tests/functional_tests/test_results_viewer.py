@@ -6,6 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.message import Message
+from textual.pilot import Pilot
+from textual.widgets import Tab
 from textual_fastdatatable import DataTable
 
 from harlequin import Harlequin
@@ -242,3 +244,180 @@ async def test_the_viewer_cap_is_a_soft_one(
         assert app.results_viewer.border_title == (
             "Query Results (Showing 10 of 100 Records)"
         )
+
+
+@pytest.mark.asyncio
+async def test_pinned_tabs_survive_the_next_run(
+    app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """A pinned result is what the next one gets compared against."""
+
+    async def run(pilot: Pilot, sql: str) -> None:
+        assert app.editor is not None
+        app.editor.focus()
+        app.editor.text = sql
+        await pilot.press("ctrl+a")
+        await pilot.press("ctrl+j")
+        for _ in range(3):
+            await wait_for_workers(app)
+            await pilot.pause()
+
+    async with app.run_test() as pilot:
+        await wait_for_workers(app)
+        while app.editor is None:
+            await pilot.pause()
+        viewer = app.results_viewer
+
+        await run(pilot, "select 1 as a")
+        assert viewer.tab_count == 1
+        assert viewer.active == "result-1"
+        # nothing to tell apart yet, so no tab bar
+        assert "hide-tabs" in viewer.classes
+
+        # an unpinned result is replaced, exactly as it always was
+        await run(pilot, "select 2 as b")
+        assert viewer.tab_count == 1
+        assert viewer.active == "result-1"
+        table = viewer.get_visible_table()
+        assert table is not None and table.plain_column_labels == ["b"]
+
+        viewer.focus()
+        await pilot.press("p")
+        await pilot.pause()
+        assert "hide-tabs" not in viewer.classes
+        assert viewer.get_tab("result-1").label_text.startswith("\N{PUSHPIN}")
+
+        await run(pilot, "select 3 as c")
+        assert viewer.tab_count == 2
+        # the new result is the one in front of you, not the pinned one
+        assert viewer.active == "result-2"
+        table = viewer.get_visible_table()
+        assert table is not None and table.plain_column_labels == ["c"]
+
+        # cycling walks positions, so the gap a pin can leave does not matter
+        await pilot.press("k")
+        assert viewer.active == "result-1"
+        await pilot.press("k")
+        assert viewer.active == "result-2"
+        await pilot.press("j")
+        assert viewer.active == "result-1"
+
+        # and the pinned tab still holds the query it was pinned on
+        pinned_table = viewer.get_visible_table()
+        assert pinned_table is not None
+        assert pinned_table.plain_column_labels == ["b"]
+
+        # unpinning hands it back to the next run
+        await pilot.press("p")
+        await pilot.pause()
+        assert viewer.get_tab("result-1").label_text == "Result 1"
+        await run(pilot, "select 4 as d")
+        assert viewer.tab_count == 1
+
+
+@pytest.mark.asyncio
+async def test_close_tab_removes_the_visible_result(
+    app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    async with app.run_test() as pilot:
+        await wait_for_workers(app)
+        while app.editor is None:
+            await pilot.pause()
+        app.editor.focus()
+        app.editor.text = "select 1; select 2"
+        await pilot.press("ctrl+a")
+        await pilot.press("ctrl+j")
+        for _ in range(3):
+            await wait_for_workers(app)
+            await pilot.pause()
+
+        viewer = app.results_viewer
+        assert viewer.tab_count == 2
+        viewer.focus()
+        await pilot.press("x")
+        await pilot.pause()
+        await pilot.pause()
+        assert viewer.tab_count == 1
+        assert "hide-tabs" in viewer.classes
+
+
+@pytest.mark.asyncio
+async def test_rename_result_tab(
+    app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    async with app.run_test() as pilot:
+        await wait_for_workers(app)
+        while app.editor is None:
+            await pilot.pause()
+        app.editor.focus()
+        app.editor.text = "select 1 as a"
+        await pilot.press("ctrl+a")
+        await pilot.press("ctrl+j")
+        for _ in range(3):
+            await wait_for_workers(app)
+            await pilot.pause()
+
+        viewer = app.results_viewer
+        viewer.focus()
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        await pilot.press(*"baseline")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        label = viewer.get_tab("result-1").label_text
+        assert "baseline" in label
+        # a named result is one you meant to keep, so it pinned itself
+        assert "\N{PUSHPIN}" in label
+        assert "hide-tabs" not in viewer.classes
+
+        # and it survives the next run, under its name
+        app.editor.focus()
+        app.editor.text = "select 2 as b"
+        await pilot.press("ctrl+a")
+        await pilot.press("ctrl+j")
+        for _ in range(3):
+            await wait_for_workers(app)
+            await pilot.pause()
+        assert viewer.tab_count == 2
+        assert "baseline" in viewer.get_tab("result-1").label_text
+
+        # an empty name puts the default back
+        viewer.focus()
+        viewer.active = "result-1"
+        await pilot.pause()
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        await pilot.press("ctrl+a")
+        await pilot.press("delete")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "baseline" not in viewer.get_tab("result-1").label_text
+
+
+@pytest.mark.asyncio
+async def test_rename_editor_buffer_tab(
+    app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    async with app.run_test() as pilot:
+        await wait_for_workers(app)
+        while app.editor is None:
+            await pilot.pause()
+        collection = app.editor_collection
+
+        collection.focus()
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        await pilot.press(*"scratch")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert collection.active is not None
+        tab = collection.tabs.query_one(f"#{collection.active}", Tab)
+        assert tab.label_text == "scratch"
+        # and the name is what gets written to the editor cache
+        assert [b.name for b in collection.buffers] == ["scratch"]

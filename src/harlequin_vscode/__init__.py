@@ -19,6 +19,7 @@ VSCODE_APP_BINDINGS = [
 VSCODE_EDITOR_BINDINGS = [
     HarlequinKeyBinding("ctrl+n", "code_editor.new_buffer"),
     HarlequinKeyBinding("ctrl+w", "code_editor.close_buffer"),
+    HarlequinKeyBinding("ctrl+t", "code_editor.rename_buffer"),
     HarlequinKeyBinding("ctrl+k", "code_editor.next_buffer"),
     HarlequinKeyBinding(
         "ctrl+enter,ctrl+j",
@@ -86,6 +87,9 @@ VSCODE_DATA_CATALOG_BINDINGS = [
 VSCODE_RESULTS_VIEWER_BINDINGS = [
     HarlequinKeyBinding("j", "results_viewer.previous_tab"),
     HarlequinKeyBinding("k", "results_viewer.next_tab"),
+    HarlequinKeyBinding("ctrl+t", "results_viewer.rename_tab"),
+    HarlequinKeyBinding("p", "results_viewer.pin_tab"),
+    HarlequinKeyBinding("x", "results_viewer.close_tab"),
     HarlequinKeyBinding("ctrl+c", "results_viewer.copy_selection"),
     HarlequinKeyBinding("enter", "results_viewer.select_cursor"),
     HarlequinKeyBinding("space", "results_viewer.view_cell"),

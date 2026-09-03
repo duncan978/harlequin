@@ -15,6 +15,7 @@ from textual.widgets import (
 from textual_fastdatatable import DataTable
 
 from harlequin.components.columns_modal import ColumnsModal
+from harlequin.components.rename_modal import RenameModal
 from harlequin.components.text_modal import CellViewModal
 from harlequin.messages import WidgetMounted
 
@@ -175,6 +176,16 @@ class ResultsViewer(TabbedContent, can_focus=True):
     }
 
     def __init__(self) -> None:
+        # Pinned panes outlive the run that made them, so tab numbers cannot be
+        # `tab_count + 1`: a pin holds `result-2` while `result-2` would be the
+        # name of the next thing pushed. The counter only rewinds to zero when
+        # the viewer is empty, which keeps the numbering of an unpinned session
+        # exactly what it always was.
+        self._next_tab_number = 0
+        self._pinned: set[str] = set()
+        self._sql_by_pane: dict[str, str] = {}
+        self._names: dict[str, str] = {}
+        self._activate_next_push = False
         super().__init__()
 
     def on_mount(self) -> None:
@@ -185,7 +196,31 @@ class ResultsViewer(TabbedContent, can_focus=True):
 
     def clear_all_tables(self) -> None:
         self.clear_panes()
+        self._pinned.clear()
+        self._sql_by_pane.clear()
+        self._names.clear()
+        self._next_tab_number = 0
         self.add_class("hide-tabs")
+
+    def clear_unpinned_tables(self) -> None:
+        """Drop last run's results, but keep the ones asked to stay.
+
+        A pin is the whole difference between a results pane and a scratch
+        pane: it says this table is worth comparing the next one against, so
+        the next run appends beside it instead of replacing it.
+        """
+        for pane in list(self.query(TabPane)):
+            if pane.id is None or pane.id in self._pinned:
+                continue
+            self._sql_by_pane.pop(pane.id, None)
+            self._names.pop(pane.id, None)
+            self.remove_pane(pane.id)
+        if not self._pinned:
+            self._next_tab_number = 0
+            self.add_class("hide-tabs")
+        # whatever this run pushes first is what the user asked to see, even
+        # with older pinned tabs sitting to the left of it.
+        self._activate_next_push = True
 
     def get_visible_table(self) -> ResultsTable | None:
         content = self.query_one(ContentSwitcher)
@@ -223,16 +258,122 @@ class ResultsViewer(TabbedContent, can_focus=True):
             null_rep="[dim]∅ null[/]",
             render_markup=False,
         )
-        n = self.tab_count + 1
-        if n > 1:
-            self.remove_class("hide-tabs")
-        pane = TabPane(f"Result {n}", table, id=f"result-{n}")
+        self._next_tab_number += 1
+        n = self._next_tab_number
+        pane_id = f"result-{n}"
+        self._sql_by_pane[pane_id] = result.statement.sql
+        pane = TabPane(f"Result {n}", table, id=pane_id)
         await self.add_pane(pane)
+        self._relabel_tab(pane_id)
+        self._sync_tab_visibility()
+        if self._activate_next_push:
+            self._activate_next_push = False
+            self.active = pane_id
         # need to manually refresh the table, since activating the tab
         # doesn't consistently cause a new layout calc.
         table.refresh(repaint=True, layout=True)
         self.announce_columns()
         return table
+
+    def action_toggle_pin(self) -> None:
+        """Keep the visible result across the next run, or stop keeping it."""
+        pane_id = self.active
+        if not pane_id:
+            return
+        if pane_id in self._pinned:
+            self._pinned.discard(pane_id)
+            self.notify(f"Unpinned {pane_id.replace('-', ' ').title()}.")
+        else:
+            self._pinned.add(pane_id)
+            self.notify(
+                f"Pinned {pane_id.replace('-', ' ').title()}. "
+                "The next query opens a new tab beside it."
+            )
+        self._relabel_tab(pane_id)
+        self._sync_tab_visibility()
+
+    def action_rename_tab(self) -> None:
+        """Give the visible result a name of your own."""
+        pane_id = self.active
+        if not pane_id:
+            return
+
+        def apply(name: str | None) -> None:
+            if name is None:
+                return
+            if name:
+                self._names[pane_id] = name
+                # naming a result is a statement that it is worth keeping, so
+                # it pins too -- an unpinned tab would not survive to wear the
+                # name past the next run. `p` still unpins it.
+                self._pinned.add(pane_id)
+            else:
+                self._names.pop(pane_id, None)
+            self._relabel_tab(pane_id)
+            self._sync_tab_visibility()
+
+        self.app.push_screen(
+            RenameModal(
+                prompt="Name this result:", current=self._names.get(pane_id, "")
+            ),
+            apply,
+        )
+
+    def action_close_tab(self) -> None:
+        """Remove the visible result, pinned or not."""
+        pane_id = self.active
+        if not pane_id:
+            return
+        self._pinned.discard(pane_id)
+        self._sql_by_pane.pop(pane_id, None)
+        self._names.pop(pane_id, None)
+        self.remove_pane(pane_id)
+        # `remove_pane` is queued, so `tab_count` is still the old one here;
+        # everything that depends on what is left has to wait for the removal.
+        self.call_after_refresh(self._after_close)
+
+    def _after_close(self) -> None:
+        self._sync_tab_visibility()
+        if self.tab_count == 0:
+            self._next_tab_number = 0
+            self.border_title = "Query Results"
+        self.announce_columns()
+
+    def _relabel_tab(self, pane_id: str) -> None:
+        """A tab says which result it is; a pinned one says which query it was.
+
+        Unpinned tabs keep the bare `Result n`, which is all there is to say
+        about a pane that will not survive the next run. A pin is a decision to
+        compare, and comparing needs the queries told apart, so a pinned tab
+        wears its SQL.
+        """
+        try:
+            tab = self.get_tab(pane_id)
+        except (NoMatches, ValueError):
+            return
+        n = pane_id.rpartition("-")[2]
+        name = self._names.get(pane_id)
+        if name is not None:
+            body = name
+        elif pane_id in self._pinned:
+            body = self._sql_snippet(pane_id)
+        else:
+            body = f"Result {n}"
+        tab.label = f"\N{PUSHPIN} {body}" if pane_id in self._pinned else body
+
+    def _sql_snippet(self, pane_id: str) -> str:
+        sql = self._sql_by_pane.get(pane_id, "")
+        collapsed = " ".join(sql.split())
+        if not collapsed:
+            return f"Result {pane_id.rpartition('-')[2]}"
+        return collapsed if len(collapsed) <= 28 else f"{collapsed[:27]}…"
+
+    def _sync_tab_visibility(self) -> None:
+        """Hide the tab bar only when there is nothing a tab could tell you."""
+        if self.tab_count > 1 or self._pinned or self._names:
+            self.remove_class("hide-tabs")
+        else:
+            self.add_class("hide-tabs")
 
     def announce_columns(self) -> None:
         """Tell the app which columns the visible result has."""
@@ -250,7 +391,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
         self.border_title = "Running Query"
         self.add_class("non-responsive")
         self.loading = True
-        self.clear_all_tables()
+        self.clear_unpinned_tables()
 
     def show_table(self, did_run: bool = True) -> None:
         self.loading = False
@@ -286,18 +427,22 @@ class ResultsViewer(TabbedContent, can_focus=True):
         self.announce_columns()
 
     def action_switch_tab(self, offset: int) -> None:
+        """Cycle by position in the tab bar.
+
+        Pinning leaves gaps in the numbering -- `result-1` can sit next to
+        `result-4` -- so the old arithmetic on the id would land on a tab that
+        is not there. Position is what the user sees, and what they mean.
+        """
         if not self.active:
             return
-        name_prefix, _, tab_number_str = self.active.rpartition("-")
-        tab_number = int(tab_number_str)
-        unsafe_tab_number = tab_number + offset
-        if unsafe_tab_number < 1:
-            new_tab_number = self.tab_count
-        elif unsafe_tab_number > self.tab_count:
-            new_tab_number = 1
-        else:
-            new_tab_number = unsafe_tab_number
-        self.active = f"{name_prefix}-{new_tab_number}"
+        pane_ids = [pane.id for pane in self.query(TabPane) if pane.id is not None]
+        if not pane_ids:
+            return
+        try:
+            current = pane_ids.index(self.active)
+        except ValueError:
+            current = 0
+        self.active = pane_ids[(current + offset) % len(pane_ids)]
         self._focus_on_visible_table()
 
     def action_focus_data_catalog(self) -> None:
