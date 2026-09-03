@@ -7,7 +7,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.validation import Integer
 from textual.widget import Widget
-from textual.widgets import Button, Checkbox, Input
+from textual.widgets import Button, Checkbox, Input, Static
 
 DEFAULT_LIMIT = 500
 """What the limit input offers, unchecked, when nothing configured a limit."""
@@ -23,7 +23,20 @@ class RunQueryBar(Horizontal):
         disabled: bool = False,
         query_limit: int | None = None,
         show_cancel_button: bool = False,
+        profile_name: str | None = None,
+        profile_is_default: bool = True,
     ) -> None:
+        self.profile_name = profile_name
+        """The config profile this session connected with, if it had one."""
+
+        self.profile_is_default = profile_is_default
+        """Whether that profile is the config file's default.
+
+        A profile chosen with `-P` is the one worth noticing -- it is the
+        session that is not the usual one -- so it is the one that gets
+        highlighted rather than stated quietly.
+        """
+
         self.query_limit = query_limit
         """The limit `--limit` configured, in force from the first query.
 
@@ -36,6 +49,13 @@ class RunQueryBar(Horizontal):
         )
 
     def compose(self) -> ComposeResult:
+        self.profile_label = Static(
+            f"profile: {self.profile_name}" if self.profile_name else "",
+            id="profile_label",
+            classes=None if self.profile_is_default else "non-default",
+        )
+        if not self.profile_name:
+            self.profile_label.add_class("hidden")
         self.transaction_button = Button(
             "Tx: Auto", id="transaction_button", classes="hidden"
         )
@@ -56,6 +76,7 @@ class RunQueryBar(Horizontal):
         self.run_button = Button("Run Query", id="run_query")
         self.cancel_button = Button("Cancel Query", id="cancel_query")
         self.cancel_button.add_class("hidden")
+        yield self.profile_label
         with Horizontal(id="transaction_buttons"):
             yield self.transaction_button
             yield self.commit_button

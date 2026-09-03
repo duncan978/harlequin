@@ -259,6 +259,12 @@ class Harlequin(AppBase):
         )
         self.adapter = adapter
         self.profile_name = profile_name
+        self.active_profile_name = self._resolve_active_profile_name(profile_name)
+        """The profile actually in force, which the Run Query Bar shows."""
+        if self.active_profile_name:
+            # also the terminal's window/tab title, for telling two sessions
+            # apart from outside Harlequin
+            self.title = f"Harlequin ({self.active_profile_name})"
         self.connection_hash = connection_hash
         self.history: History | None = None
         self.show_files = show_files
@@ -332,6 +338,25 @@ class Harlequin(AppBase):
         except HarlequinConfigError as e:
             self.exit(return_code=2, message=pretty_error_message(e))
 
+    @staticmethod
+    def _resolve_active_profile_name(profile_name: str | None) -> str | None:
+        """The profile this session is running under.
+
+        `--profile` alone cannot say it: with no `--profile`, what got loaded
+        is the config file's `default_profile`, and that is the name worth
+        showing. The special name `None` asks for Harlequin's own defaults, so
+        there is no profile to name.
+        """
+        if profile_name is not None:
+            return None if profile_name == "None" else profile_name
+        try:
+            config = load_config(get_highest_priority_existing_config_file())
+        except Exception:
+            # a broken config is the CLI's error to report, not a reason for
+            # the app to fail on its way up
+            return None
+        return config.default_profile
+
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
         self.data_catalog = DataCatalog(
@@ -351,6 +376,8 @@ class Harlequin(AppBase):
             query_limit=self.query_limit,
             classes="non-responsive",
             show_cancel_button=self.adapter.IMPLEMENTS_CANCEL,
+            profile_name=self.active_profile_name,
+            profile_is_default=self.profile_name is None,
         )
         self.footer = Footer(show_command_palette=False)
 

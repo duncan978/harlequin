@@ -172,6 +172,25 @@ RunQueryBar {
     background: $background;
 }
 
+RunQueryBar #profile_label {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    margin: 0 1 0 0;
+    color: $text-muted;
+    background: $background;
+}
+
+RunQueryBar #profile_label.non-default {
+    color: $background;
+    background: $warning;
+    text-style: bold;
+}
+
+RunQueryBar #profile_label.hidden {
+    display: none;
+}
+
 RunQueryBar Horizontal#transaction_buttons {
     width: auto;
 }
