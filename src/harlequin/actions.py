@@ -64,6 +64,11 @@ HARLEQUIN_ACTIONS = {
         target=None,
         action="toggle_sidebar",
     ),
+    "toggle_catalog_side": Action(
+        target=None,
+        action="toggle_catalog_side",
+        description="Move Data Catalog",
+    ),
     "toggle_full_screen": Action(
         target=None,
         action="toggle_full_screen",

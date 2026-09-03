@@ -507,6 +507,14 @@ def build_cli(argv: Sequence[str]) -> click.Command:
         ),
     )
     @click.option(
+        "--catalog-side",
+        type=click.Choice(["left", "right"], case_sensitive=False),
+        help=(
+            "Which side of the query editor the Data Catalog sits on. "
+            "Default is left; f7 moves it for the current session."
+        ),
+    )
+    @click.option(
         "--config",
         help=(
             "Run the configuration wizard to create or update a Harlequin config file."
@@ -635,6 +643,7 @@ def build_cli(argv: Sequence[str]) -> click.Command:
                 )
                 ctx.exit(2)
         show_s3: str | None = config.pop("show_s3", None)
+        catalog_side: str = config.pop("catalog_side", None) or "left"
         export_path: Path | str | None = config.pop("output", None)
         read_only: bool = bool(config.pop("read_only", False))
         if read_only and not adapter_cls.IMPLEMENTS_READ_ONLY:
@@ -700,6 +709,7 @@ def build_cli(argv: Sequence[str]) -> click.Command:
                 theme=theme,
                 show_files=show_files,
                 show_s3=show_s3,
+                catalog_side=catalog_side,
                 export_path=export_path,
                 ssh_tunnel=tunnel,
             )

@@ -244,6 +244,7 @@ class Harlequin(AppBase):
         theme: str = "harlequin",
         show_files: Path | None = None,
         show_s3: str | None = None,
+        catalog_side: str = "left",
         export_path: Path | str | None = None,
         viewer_max_rows: int | str | None = 100_000,
         query_limit: int | str | None = None,
@@ -270,6 +271,10 @@ class Harlequin(AppBase):
         self.history: History | None = None
         self.show_files = show_files
         self.show_s3 = show_s3 or None
+        # which side of the main panel the Data Catalog sits on. Anything but
+        # "right" is left, so a typo in the config file costs the default
+        # layout rather than the app.
+        self.catalog_side = "right" if str(catalog_side).lower() == "right" else "left"
         # already started, by the command that built this app: `ssh` prompts for
         # a passphrase on the terminal Textual is about to take.
         self.ssh_tunnel = ssh_tunnel
@@ -382,13 +387,18 @@ class Harlequin(AppBase):
         )
         self.footer = Footer(show_command_palette=False)
 
-        # lay out the widgets
-        with Horizontal():
-            yield self.data_catalog
+        # lay out the widgets. The Data Catalog is a sibling of the main
+        # panel, so which side it lands on is only the order they are yielded
+        # in -- and `action_toggle_catalog_side` moves it after the fact.
+        with Horizontal(id="panes"):
+            if self.catalog_side == "left":
+                yield self.data_catalog
             with Vertical(id="main_panel"):
                 yield editor_placeholder
                 yield self.run_query_bar
                 yield self.results_viewer
+            if self.catalog_side == "right":
+                yield self.data_catalog
         yield self.footer
 
     # this is some kind of mypy bug; the types are literally copied from the
@@ -1248,6 +1258,21 @@ class Harlequin(AppBase):
             self.data_catalog.disabled = False
         else:
             self.sidebar_hidden = not self.sidebar_hidden
+
+    def action_toggle_catalog_side(self) -> None:
+        """Move the Data Catalog to the other side of the main panel."""
+        panes = self.query_one("#panes", Horizontal)
+        main_panel = self.query_one("#main_panel", Vertical)
+        if self.catalog_side == "left":
+            panes.move_child(self.data_catalog, after=main_panel)
+            self.catalog_side = "right"
+        else:
+            panes.move_child(self.data_catalog, before=main_panel)
+            self.catalog_side = "left"
+        self.notify(
+            f"Data Catalog moved to the {self.catalog_side}. "
+            f'Set `catalog_side = "{self.catalog_side}"` in your config to keep it.'
+        )
 
     def action_refresh_catalog(self) -> None:
         self.data_catalog.database_tree.loading = True

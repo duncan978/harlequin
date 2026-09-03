@@ -8,6 +8,7 @@ VSCODE_APP_BINDINGS = [
     HarlequinKeyBinding("f6", "focus_data_catalog"),
     HarlequinKeyBinding("f8", "show_query_history"),
     HarlequinKeyBinding("ctrl+b,f9", "toggle_sidebar"),
+    HarlequinKeyBinding("f7", "toggle_catalog_side"),
     HarlequinKeyBinding("f10", "toggle_full_screen"),
     HarlequinKeyBinding("f12", "show_debug_info"),
     HarlequinKeyBinding("ctrl+e", "show_data_exporter"),
