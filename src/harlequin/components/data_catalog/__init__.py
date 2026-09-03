@@ -19,6 +19,7 @@ from textual.widgets._tree import TreeNode
 
 from harlequin.catalog import Catalog, CatalogItem, InteractiveCatalogItem
 from harlequin.catalog_cache import CatalogCache
+from harlequin.components.column_list import ColumnList
 from harlequin.components.data_catalog.database_tree import DatabaseTree
 from harlequin.components.data_catalog.s3_tree import S3Tree as S3Tree
 from harlequin.components.data_catalog.tree import HarlequinTree as HarlequinTree
@@ -134,6 +135,8 @@ class DataCatalog(TabbedContent, can_focus=True):
         self.add_pane(
             TabPane("Databases", self.database_tree, self.database_context_menu)
         )
+        self.column_list = ColumnList()
+        self.add_pane(TabPane("Columns", self.column_list))
         if self.show_files is not None:
             self.file_tree: FileTree | None = FileTree(path=self.show_files)
             self.add_pane(TabPane("Files", self.file_tree))
@@ -158,8 +161,6 @@ class DataCatalog(TabbedContent, can_focus=True):
         else:
             self.s3_tree = None
 
-        if self.show_files is None and self.show_s3 is None:
-            self.add_class("hide-tabs")
         self.query_one(Tabs).can_focus = False
         self.post_message(WidgetMounted(widget=self))
 
@@ -186,6 +187,12 @@ class DataCatalog(TabbedContent, can_focus=True):
     ) -> None:
         event.stop()
         self.database_context_menu.reload(node=event.node)
+
+    def update_columns(
+        self, columns: list[tuple[str, str]], current: int | None = None
+    ) -> None:
+        """Point the Columns tab at whatever result is visible right now."""
+        self.column_list.set_columns(columns, current)
 
     def update_database_tree(self, catalog: Catalog) -> None:
         self.database_tree.catalog = catalog

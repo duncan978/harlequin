@@ -258,6 +258,9 @@ HARLEQUIN_ACTIONS = {
     "results_viewer.view_cell": Action(
         target=ResultsTable, action="view_cell", description="View Cell"
     ),
+    "results_viewer.show_columns": Action(
+        target=ResultsTable, action="show_columns", description="List Columns"
+    ),
     "results_viewer.select_cursor": Action(target=ResultsTable, action="select_cursor"),
     # Moving the cursor
     "results_viewer.cursor_up": Action(target=ResultsTable, action="cursor_up"),

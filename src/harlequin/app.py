@@ -66,6 +66,7 @@ from harlequin.components import (
     RunQueryBar,
     export_callback,
 )
+from harlequin.components.column_list import ColumnList
 from harlequin.components.confirm_modal import ConfirmModal
 from harlequin.components.data_catalog import ContextMenu
 from harlequin.components.data_catalog.tree import HarlequinTree
@@ -1214,6 +1215,24 @@ class Harlequin(AppBase):
                 id=SCREEN_ID,
             )
         )
+
+    @on(ResultsViewer.ColumnsChanged)
+    def update_catalog_columns(self, message: ResultsViewer.ColumnsChanged) -> None:
+        """Keep the Data Catalog's Columns tab on the visible result."""
+        message.stop()
+        self.data_catalog.update_columns(
+            columns=message.columns, current=message.current
+        )
+
+    @on(ColumnList.ColumnSelected)
+    def jump_to_column(self, message: ColumnList.ColumnSelected) -> None:
+        """A pick in the Columns tab puts the grid's cursor on that column."""
+        message.stop()
+        table = self.results_viewer.get_visible_table()
+        if table is None:
+            return
+        table.move_cursor(column=message.column)
+        table.focus()
 
     def action_toggle_full_screen(self) -> None:
         self.full_screen = not self.full_screen

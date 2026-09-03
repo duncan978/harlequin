@@ -693,3 +693,75 @@ ConfirmModal Horizontal#button_row Button#no{
         background: $secondary;
     }
 }
+
+/* COLUMN LIST (the `c` modal and the Data Catalog's Columns tab) */
+ColumnList {
+    height: 1fr;
+    width: 1fr;
+    padding: 0;
+}
+
+ColumnList .column_filter {
+    border: none;
+    height: 1;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    background: $background-lighten-1;
+}
+
+ColumnList .column_filter:focus {
+    background: $background-lighten-1;
+}
+
+ColumnList .column_list {
+    background: $background;
+    background-tint: $background;
+    border: round $border-color-nofocus;
+    border-title-color: $border-title-color-nofocus;
+    height: 1fr;
+    width: 100%;
+    padding: 0;
+}
+
+ColumnList:focus-within .column_list {
+    border: round $border-color-focus;
+    border-title-color: $border-title-color-focus;
+}
+
+ColumnList .column_list > .option-list--option-highlighted {
+    background: $secondary;
+    color: auto;
+    text-style: none;
+}
+
+ColumnList .column_list > .option-list--option-hover {
+    color: $text;
+    background: $boost;
+}
+
+ColumnList .column_list_footer {
+    dock: bottom;
+    color: $text-muted;
+    margin: 1 0 0 0;
+    padding: 0 1;
+}
+
+/* the Columns tab lives inside the catalog's own border, so it does not
+   need a second one of its own around the filter row */
+DataCatalog ColumnList {
+    padding: 0 1;
+}
+
+/* COLUMNS MODAL */
+ColumnsModal {
+    align: center middle;
+    padding: 0;
+}
+
+ColumnsModal #modal_outer {
+    margin: 2 4;
+    width: 70%;
+    max-width: 88;
+    height: 80%;
+    max-height: 40;
+}

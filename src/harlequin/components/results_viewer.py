@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from rich.style import Style
 from rich.text import Text
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.widgets import (
     ContentSwitcher,
     TabbedContent,
@@ -13,6 +14,7 @@ from textual.widgets import (
 )
 from textual_fastdatatable import DataTable
 
+from harlequin.components.columns_modal import ColumnsModal
 from harlequin.components.text_modal import CellViewModal
 from harlequin.messages import WidgetMounted
 
@@ -41,6 +43,7 @@ class ResultsTable(DataTable, inherit_bindings=False):
         data: Any | None = None,
         column_labels: list[str | Text] | None = None,
         plain_column_labels: list[str | Text] | None = None,
+        column_type_labels: list[str] | None = None,
         column_widths: list[int | None] | None = None,
         max_column_content_width: int | None = None,
         show_header: bool = True,
@@ -66,6 +69,13 @@ class ResultsTable(DataTable, inherit_bindings=False):
         self.plain_column_labels: list[str] = (
             [str(label) for label in plain_column_labels]
             if plain_column_labels is not None
+            else []
+        )
+        # the type the database reported for each column, parallel to the
+        # labels above; the Columns list shows it next to the name.
+        self.column_type_labels: list[str] = (
+            [str(label) for label in column_type_labels]
+            if column_type_labels is not None
             else []
         )
         # what the database returned, which `source_row_count` cannot say on its
@@ -112,9 +122,54 @@ class ResultsTable(DataTable, inherit_bindings=False):
             column_label = ""
         self.app.push_screen(CellViewModal(value=value, column_label=column_label))
 
+    def column_pairs(self) -> list[tuple[str, str]]:
+        """This result's columns as (name, type) pairs, in grid order."""
+        if not self.plain_column_labels:
+            return []
+        types = self.column_type_labels
+        return [
+            (name, types[i] if i < len(types) else "")
+            for i, name in enumerate(self.plain_column_labels)
+        ]
+
+    def action_show_columns(self) -> None:
+        """List every column of this result; picking one jumps the cursor to it.
+
+        A column 80 to the right is not merely off-screen in the grid, it is
+        unfindable without arrowing past the 79 in front of it.
+        """
+        columns = self.column_pairs()
+        if not columns:
+            return
+
+        def jump_to(column: int | None) -> None:
+            if column is None:
+                return
+            self.move_cursor(column=column)
+            self.focus()
+
+        self.app.push_screen(
+            ColumnsModal(columns=columns, current=self.cursor_column), jump_to
+        )
+
 
 class ResultsViewer(TabbedContent, can_focus=True):
     BORDER_TITLE = "Query Results"
+
+    class ColumnsChanged(Message):
+        """The visible result changed, and with it the list of columns.
+
+        The Data Catalog's Columns tab is a second view of the grid's header,
+        so it has to hear about every result that replaces the one it shows.
+        """
+
+        def __init__(
+            self, columns: list[tuple[str, str]], current: int | None
+        ) -> None:
+            self.columns = columns
+            self.current = current
+            super().__init__()
+
     COMPONENT_CLASSES: ClassVar[set[str]] = {
         "results-viewer--type-label",
     }
@@ -157,6 +212,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
             id=table_id,
             column_labels=formatted_labels,  # type: ignore
             plain_column_labels=[col_name for (col_name, _) in result.columns],
+            column_type_labels=[col_type for (_, col_type) in result.columns],
             # the backend was built by `harlequin.query.fetch()`, which already
             # applied `viewer_max_rows` as its row cap.
             backend=result.backend,
@@ -175,7 +231,20 @@ class ResultsViewer(TabbedContent, can_focus=True):
         # need to manually refresh the table, since activating the tab
         # doesn't consistently cause a new layout calc.
         table.refresh(repaint=True, layout=True)
+        self.announce_columns()
         return table
+
+    def announce_columns(self) -> None:
+        """Tell the app which columns the visible result has."""
+        table = self.get_visible_table()
+        if table is None:
+            self.post_message(self.ColumnsChanged(columns=[], current=None))
+            return
+        self.post_message(
+            self.ColumnsChanged(
+                columns=table.column_pairs(), current=table.cursor_column
+            )
+        )
 
     def show_loading(self) -> None:
         self.border_title = "Running Query"
@@ -197,6 +266,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
                     self.border_title = "Query Returned No Records"
             else:
                 self.border_title = "Query Results"
+        self.announce_columns()
 
     def on_focus(self) -> None:
         self._focus_on_visible_table()
@@ -213,6 +283,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
         if maybe_table is not None:
             self.border_title = f"Query Results {self._human_row_count(maybe_table)}"
             maybe_table.focus()
+        self.announce_columns()
 
     def action_switch_tab(self, offset: int) -> None:
         if not self.active:
