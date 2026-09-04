@@ -21,17 +21,30 @@ VSCODE_EDITOR_BINDINGS = [
     HarlequinKeyBinding("ctrl+w", "code_editor.close_buffer"),
     HarlequinKeyBinding("ctrl+t", "code_editor.rename_buffer"),
     HarlequinKeyBinding("ctrl+k", "code_editor.next_buffer"),
-    # Sections. Two keys for the navigator, because it is the one that can reach
-    # the other two actions if a terminal does not report ctrl+shift distinctly.
-    # ctrl+l rather than an f-key: f1 through f10 and f12 are bound above, and
-    # macOS takes f11 for Show Desktop before a terminal ever sees it. Rather
-    # than an alt chord, too: alt+o would be the better mnemonic next to
-    # ctrl+shift+o, but on macOS alt only arrives as alt when the terminal is
-    # set to send it, and a plain ctrl chord needs no such setting and carries
-    # no printable character to leak into the editor.
+    # Sections. Each is spelled two ways, and the reason is worth keeping: a
+    # `ctrl+shift+X` chord only reaches an application when every layer between
+    # the keyboard and it encodes the shift -- the terminal has to send CSI-u
+    # and, inside tmux, tmux has to forward it. Where it does not, the shift is
+    # simply dropped and `ctrl+shift+o` arrives as `ctrl+o`, so the binding can
+    # never fire and Open Query runs instead. Measured on Ghostty + tmux 3.7c
+    # with `extended-keys on`: dropped. So the second spelling of each is a
+    # plain ASCII control byte, which no layer can lose.
+    #
+    # Why these letters: f1 through f10 and f12 are bound above and macOS takes
+    # f11 for Show Desktop, so no f-key was available; `ctrl+p` is Textual's
+    # command palette; and an alt chord both needs a macOS terminal setting and
+    # carries a printable character a focused TextArea inserts. `ctrl+l` and
+    # `ctrl+d` are the two free plain-ctrl *letters* left, and `ctrl+backslash`
+    # is 0x1c, which is as reliable and rarer to want. Run section gets the
+    # easiest of them because it is the one pressed over and over.
+    #
+    # Note that the ctrl+shift+arrow bindings further down are NOT in the same
+    # boat: a modified arrow, home, end or f-key has had a legacy encoding
+    # (`CSI 1;mod D`) since xterm, so those arrive everywhere. It is ctrl+shift
+    # with a *letter* or with Enter that has no legacy form and needs CSI-u.
     HarlequinKeyBinding("ctrl+shift+o,ctrl+l", "code_editor.show_sections"),
-    HarlequinKeyBinding("ctrl+shift+f", "code_editor.focus_section"),
-    HarlequinKeyBinding("ctrl+shift+enter", "code_editor.run_section"),
+    HarlequinKeyBinding("ctrl+shift+enter,ctrl+d", "code_editor.run_section"),
+    HarlequinKeyBinding("ctrl+shift+f,ctrl+backslash", "code_editor.focus_section"),
     HarlequinKeyBinding(
         "ctrl+enter,ctrl+j",
         "code_editor.run_query",

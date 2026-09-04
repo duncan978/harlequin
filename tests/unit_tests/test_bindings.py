@@ -1,11 +1,14 @@
-# TODO!
-"""The default keymap binds each key once, and nothing Textual has already taken.
+"""The default keymap binds each key once, and nothing else has already taken it.
 
-Picking a key for a new action by reading the keymap is not enough, and choosing
-one badly twice is what prompted this: `f11` is bound by *macOS* (Show Desktop)
-before a terminal ever sees it, and `ctrl+p` is bound by *Textual*, which opens
-its command palette from `App` regardless of what a keymap says. Neither shows up
-in the keymap, so the keymap cannot be the only thing consulted.
+Reading the keymap is not enough to know a key is free, and getting that wrong
+twice in a row is what prompted this file. `f11` is taken by *macOS* (Show
+Desktop) and never reaches the terminal at all. `ctrl+p` is taken by *Textual*,
+which opens its command palette from `App` whatever a keymap says. Neither
+appears in the keymap. And `ctrl+shift+o` is taken by nothing yet still does not
+work through Ghostty + tmux, for the reason below.
+
+`$WORKBENCH/bin/ale-keys --probe` is what measures any of this on a given
+terminal; these tests are what stop the answers being forgotten.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from textual.app import App
 
 from harlequin_vscode import VSCODE
 
-# Keys a terminal, an operating system or Textual itself takes first, whatever a
+# Keys an operating system, a terminal or Textual itself takes first, whatever a
 # keymap says. Add to this when one bites, with the reason -- the list is the
 # institutional memory for "why is this key not that key".
 RESERVED = {
@@ -23,6 +26,31 @@ RESERVED = {
     "f11": "macOS Show Desktop; the key never reaches the terminal",
     "ctrl+shift+p": "many terminals send this as ctrl+p",
 }
+
+# `ctrl+shift+X` is not reserved -- it is *unreliable*, which is a different
+# problem and needs a different rule.
+#
+# A modified arrow, Home, End, Page key or f-key has had a legacy encoding since
+# xterm (`CSI 1 ; mod D` and friends), so `ctrl+shift+left` arrives everywhere --
+# which is why upstream's own selection bindings are fine. `ctrl+shift` with a
+# *letter*, or with Enter, has no legacy form at all: it needs CSI-u, which means
+# the terminal must encode it and, inside tmux, tmux must forward it. Measured on
+# Ghostty + tmux 3.7c with `extended-keys on`, it does not -- the shift is
+# dropped, `ctrl+shift+o` arrives as `ctrl+o`, the binding never fires, and Open
+# Query runs instead.
+#
+# So a ctrl+shift+letter chord may be *a* spelling of an action, never its only
+# one. Pair it with an ASCII control chord, which no layer can lose.
+
+_NEEDS_CSI_U_BASES = {"enter", "tab", "space", "backspace"}
+
+
+def _needs_csi_u(key: str) -> bool:
+    """True for a ctrl+shift chord with no legacy encoding to fall back on."""
+    if not key.startswith("ctrl+shift+"):
+        return False
+    base = key[len("ctrl+shift+") :]
+    return len(base) == 1 or base in _NEEDS_CSI_U_BASES
 
 
 def _keys() -> list[tuple[str, str]]:
@@ -44,6 +72,31 @@ def test_the_command_palette_binding_is_what_we_think_it_is() -> None:
 def test_the_keymap_avoids_reserved_keys(key: str, reason: str) -> None:
     bound = [action for bound_key, action in _keys() if bound_key == key]
     assert not bound, f"{key} is bound to {bound}, but it is taken by {reason}"
+
+
+def test_the_csi_u_rule_matches_the_keys_it_is_about() -> None:
+    assert _needs_csi_u("ctrl+shift+o")
+    assert _needs_csi_u("ctrl+shift+enter")
+    # a modified arrow has a legacy encoding, so it is not in this class
+    assert not _needs_csi_u("ctrl+shift+left")
+    assert not _needs_csi_u("ctrl+shift+home")
+    assert not _needs_csi_u("ctrl+o")
+
+
+def test_no_action_depends_only_on_a_ctrl_shift_letter() -> None:
+    by_action: dict[str, list[str]] = {}
+    for key, action in _keys():
+        by_action.setdefault(action, []).append(key)
+    orphans = [
+        "%s is only reachable by %s" % (action, keys)
+        for action, keys in by_action.items()
+        if keys and all(_needs_csi_u(k) for k in keys)
+    ]
+    assert not orphans, (
+        "ctrl+shift with a letter or Enter needs CSI-u, which Ghostty + tmux with "
+        "extended-keys on does not deliver, so it must not be an action's only "
+        "spelling. Pair it with an ASCII control chord:\n" + "\n".join(orphans)
+    )
 
 
 def test_no_key_is_bound_twice_in_the_same_context() -> None:
