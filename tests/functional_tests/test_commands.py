@@ -116,7 +116,7 @@ async def test_the_first_run_asks_and_the_second_does_not(
         )
         await pilot.click("#yes")
         await pilot.pause()
-        assert "send" in app._approved_commands
+        assert sys.executable in app._approved_programs
 
         await pilot.press("alt+s")
         await pilot.pause()
@@ -136,7 +136,7 @@ async def test_answering_no_runs_nothing(
         await pilot.pause()
         await pilot.click("#no")
         await pilot.pause()
-        assert "send" not in app._approved_commands
+        assert app._approved_programs == set()
         assert not [w for w in app.workers if w.group == "external_commands"]
 
 
@@ -334,3 +334,69 @@ async def test_a_saved_buffer_reports_its_path(
         target.write_text("select 1;\n")
         app.editor_collection.remember_buffer_path(target)
         assert app.editor_collection.active_buffer_path() == target
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_app",
+    [
+        {
+            "send": command(ECHO_STDIN, description="Send buffer"),
+            "send_other": command(ECHO_STDIN, description="Send something else"),
+        }
+    ],
+    indirect=True,
+)
+async def test_approving_one_command_covers_another_running_the_same_program(
+    command_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    # The question the dialog asks is "may Harlequin run this program", and several
+    # entries handing different flags to one tool are one answer to it. Asking per entry
+    # would teach the user to say yes without reading, which is worse than not asking.
+    app = command_app
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        app.editor.text = "select 1;"
+
+        await pilot.press("alt+s")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmModal)
+        prompt = app.screen.prompt
+        assert "send_other" in prompt, "the dialog says what else it covers"
+        await pilot.click("#yes")
+        await pilot.pause()
+
+        app.action_run_command("send_other")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmModal), "same program, same decision"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_app",
+    [
+        {
+            "send": command(ECHO_STDIN),
+            "other_program": CommandConfig(
+                command=["/bin/echo", "hello"], description="A different tool"
+            ),
+        }
+    ],
+    indirect=True,
+)
+async def test_a_command_running_a_different_program_still_asks(
+    command_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    app = command_app
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        app.editor.text = "select 1;"
+        await _run(app, pilot)  # approves sys.executable
+
+        app.action_run_command("other_program")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmModal), (
+            "a program you have not approved stops and asks -- that is the whole gate"
+        )

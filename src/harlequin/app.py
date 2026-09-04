@@ -415,12 +415,16 @@ class Harlequin(AppBase):
         self.commands: dict[str, CommandConfig] = dict(commands or {})
         self.adapter_name = adapter_name
         self.actions = build_actions(self.commands)
-        self._approved_commands: set[str] = set()
-        """Commands the user has confirmed in this process.
+        self._approved_programs: set[str] = set()
+        """Programs the user has let a configured command run, in this process.
 
-        Session-scoped on purpose: a config file must not be able to approve its own
-        subprocesses, and there is no trust store to go stale. One Yes per command per
-        Harlequin session is the price of that.
+        Keyed by the program rather than by the command name, because that is what the
+        question is about: several `[commands]` entries handing different flags to one
+        tool are one decision, and asking it seven times would teach the user to say yes
+        without reading. Session-scoped on purpose -- a config file must not be able to
+        approve its own subprocesses, and a trust store that outlives the process is
+        upstream's to design (M4 §3.8), not something to invent here and have to unpick
+        on the next rebase.
         """
         try:
             self.all_keymaps = load_keymap_plugins(
@@ -1743,26 +1747,46 @@ class Harlequin(AppBase):
             return
         if invocation is None:
             return
-        if name in self._approved_commands:
+        program = invocation.argv[0]
+        if program in self._approved_programs:
             self._run_external_command(invocation)
             return
 
         def confirmed(approved: bool | None) -> None:
             if not approved:
                 return
-            self._approved_commands.add(name)
+            self._approved_programs.add(program)
             self._run_external_command(invocation)
 
-        # The consent gate. A config file is data, and this is the one place where data
-        # becomes a program Harlequin executes, so a human says yes to it once per
-        # process. There is deliberately no config key to skip this: a file cannot be
+        # The consent gate. A config file is data, and this is the one place where
+        # data becomes a program Harlequin executes, so a human says yes before it
+        # runs. There is deliberately no config key to skip it: a file cannot be
         # allowed to approve itself.
+        #
+        # Keyed by the **program**, not by the command's name. What is being consented
+        # to is "Harlequin may execute this program", and a second table that runs the
+        # same program with a different flag is not a second decision -- it is the same
+        # one, asked again in a way that teaches the user to say yes without reading.
+        # Seven entries calling one tool are one Yes; a config that names a program you
+        # have not approved still stops and asks, which is the property that matters.
+        others = sorted(
+            other
+            for other, config in self.commands.items()
+            if other != name and config.argv()[:1] == [program]
+        )
+        also = (
+            f"\n\nThis also covers {len(others)} other command"
+            f"{'' if len(others) == 1 else 's'} that run {program} "
+            f"({', '.join(others)}) for the rest of this Harlequin session."
+            if others
+            else ""
+        )
         self.push_screen(
             ConfirmModal(
                 prompt=(
                     f"Run [b]{' '.join(invocation.argv)}[/b]?\n\n"
                     f"{command.description or name} is configured in a config file. "
-                    "Harlequin will run it with your environment, once per press."
+                    f"Harlequin will run it with your environment.{also}"
                 )
             ),
             confirmed,
