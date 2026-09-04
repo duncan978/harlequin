@@ -21,11 +21,15 @@ VSCODE_EDITOR_BINDINGS = [
     HarlequinKeyBinding("ctrl+w", "code_editor.close_buffer"),
     HarlequinKeyBinding("ctrl+t", "code_editor.rename_buffer"),
     HarlequinKeyBinding("ctrl+k", "code_editor.next_buffer"),
-    # Sections. f11 as well as the chord, because a terminal that does not
-    # report ctrl+shift distinctly would otherwise leave the navigator -- and
-    # with it "focus section" and "run section", which it can also do --
-    # unreachable.
-    HarlequinKeyBinding("ctrl+shift+o,f11", "code_editor.show_sections"),
+    # Sections. Two keys for the navigator, because it is the one that can reach
+    # the other two actions if a terminal does not report ctrl+shift distinctly.
+    # ctrl+l rather than an f-key: f1 through f10 and f12 are bound above, and
+    # macOS takes f11 for Show Desktop before a terminal ever sees it. Rather
+    # than an alt chord, too: alt+o would be the better mnemonic next to
+    # ctrl+shift+o, but on macOS alt only arrives as alt when the terminal is
+    # set to send it, and a plain ctrl chord needs no such setting and carries
+    # no printable character to leak into the editor.
+    HarlequinKeyBinding("ctrl+shift+o,ctrl+l", "code_editor.show_sections"),
     HarlequinKeyBinding("ctrl+shift+f", "code_editor.focus_section"),
     HarlequinKeyBinding("ctrl+shift+enter", "code_editor.run_section"),
     HarlequinKeyBinding(

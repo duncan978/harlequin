@@ -43,7 +43,7 @@ async def test_the_navigator_lists_the_sections_and_jumps(
         await _ready(app, pilot, wait_for_workers)
         app.editor.text = SCRIPT
 
-        await pilot.press("f11")
+        await pilot.press("ctrl+l")
         await pilot.pause()
         modal = app.screen
         assert isinstance(modal, SectionsModal)
@@ -76,7 +76,7 @@ async def test_the_navigator_says_so_when_there_are_no_sections(
     async with app.run_test() as pilot:
         await _ready(app, pilot, wait_for_workers)
         app.editor.text = "select 1;\nselect 2;\n"
-        await pilot.press("f11")
+        await pilot.press("ctrl+l")
         await pilot.pause()
         assert not isinstance(app.screen, SectionsModal)
         assert "-- ## Name" in list(app._notifications)[-1].message

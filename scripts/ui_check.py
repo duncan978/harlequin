@@ -110,7 +110,7 @@ async def render(
         shot(app, "f9")
         await pilot.press("f9")
         # the section navigator, over whatever is behind it
-        await pilot.press("f11")
+        await pilot.press("ctrl+l")
         await pilot.pause(0.3)
         shot(app, "sections")
         await pilot.press("escape")
