@@ -26,10 +26,20 @@ from harlequin.autocomplete import (
 )
 from harlequin.components.text_modal import ErrorModal
 from harlequin.components.rename_modal import RenameModal
+from harlequin.components.sections_modal import SectionsModal
 from harlequin.editor_cache import BufferState, load_cache
 from harlequin.exception import HarlequinExternalError
 from harlequin.external import launch_external_editor
 from harlequin.messages import WidgetMounted
+from harlequin.sections import (
+    Section,
+    find_sections,
+    offset_of,
+    point_of,
+    section_at,
+    section_text,
+    splice,
+)
 from harlequin.statements import find_separators
 
 SYMBOL_SCAN_INTERVAL = 0.3
@@ -44,6 +54,27 @@ class EditorState:
     selection: Selection = field(default_factory=Selection)
     scroll_offset: Offset = field(default_factory=Offset)
     undo_history: Union[EditHistory, None] = None
+
+
+@dataclass
+class SectionView:
+    """A tab that is one section of another tab, and where it came from.
+
+    "Focus section" is what Harlequin has instead of code folding (roadmap
+    §3.4): the section opens in its own tab, you work on it with the rest of
+    the script out of the way, and leaving or closing the tab writes it back
+    into the buffer it came from.
+    """
+
+    parent_id: str
+    """The buffer id this section belongs to."""
+    span: tuple[int, int]
+    """Character offsets of the section in the parent, as last written."""
+    original: str
+    """The section's text as last written, so an untouched tab writes nothing
+    and a parent that has moved on can be recognised."""
+    name: str
+    """The section's name, which is how it is found again if the parent moved."""
 
 
 def _blank_history(template: EditHistory) -> EditHistory:
@@ -339,6 +370,8 @@ class EditorCollection(Vertical):
         # replaces a state wholesale on every tab switch, which would take the
         # name with it.
         self.buffer_names: dict[str, str] = {}
+        # tabs that are one section of another tab; see SectionView.
+        self.section_views: dict[str, SectionView] = {}
         self.loaded_buffer_id: str | None = None
         self.tabs = Tabs()
         self.tabs.can_focus = False
@@ -364,8 +397,16 @@ class EditorCollection(Vertical):
 
     @property
     def buffers(self) -> List[BufferState]:
-        """The state of every buffer, in tab order, for the editor cache."""
+        """The state of every buffer, in tab order, for the editor cache.
+
+        This is what the cache reads at quit, so it is also the last chance a
+        focused section gets to reach its parent: `apply_section_views` runs
+        here so quitting with a section tab open does not lose the edit. The
+        cache does not carry the section-to-parent link itself, so on the next
+        start that tab is an ordinary tab holding the section's text.
+        """
         self._save_loaded_buffer()
+        self.apply_section_views()
         return [
             BufferState(
                 selection=state.selection,
@@ -436,7 +477,13 @@ class EditorCollection(Vertical):
         new_buffer_id = message.tab.id
         if new_buffer_id is None or new_buffer_id == self.loaded_buffer_id:
             return
+        leaving = self.loaded_buffer_id
         self._save_loaded_buffer()
+        # Before the new tab's state is loaded, not after: the tab being opened
+        # is often the parent, and it has to load the text the section just
+        # wrote into it rather than the text from before.
+        if leaving is not None:
+            self.apply_section_view(leaving)
         self.loaded_buffer_id = new_buffer_id
         state = self.buffer_states.get(new_buffer_id)
         if state is not None:
@@ -476,18 +523,27 @@ class EditorCollection(Vertical):
         return self.editor
 
     def action_close_buffer(self) -> None:
+        closing = self.active
+        # A section tab is closed by writing it back, which is what closing one
+        # means: the section goes home and the tab goes away.
+        if closing is not None and closing in self.section_views:
+            self._save_loaded_buffer()
+            self.apply_section_view(closing)
         if self.tab_count > 1:
             if self.tab_count == 2:
                 self.add_class("hide-tabs")
-            closed_buffer_id = self.active
+            closed_buffer_id = closing
             # the editor's contents belong to the buffer being closed, so they
             # are dropped rather than saved when the next tab is activated.
             self.loaded_buffer_id = None
             if closed_buffer_id is not None:
                 self.buffer_states.pop(closed_buffer_id, None)
                 self.buffer_names.pop(closed_buffer_id, None)
+                self.section_views.pop(closed_buffer_id, None)
                 self.tabs.remove_tab(closed_buffer_id)
         else:
+            if closing is not None:
+                self.section_views.pop(closing, None)
             self.editor.load_state(EditorState())
         self.editor.focus()
 
@@ -527,6 +583,218 @@ class EditorCollection(Vertical):
         if self.tab_count < 2:
             return
         self.tabs.action_next_tab()
+
+    # --- sections (roadmap §3.4) --------------------------------------------
+    # A long working script is a handful of related queries under `-- ##`
+    # headings. There is no code folding to collapse the ones you are not
+    # looking at -- `textual-textarea` has none -- so these three are what a
+    # long buffer gets instead: a navigator to jump between the headings, a way
+    # to open one section on its own, and a way to run just that section.
+    # All three read the same parser, `harlequin.sections`.
+
+    def _sections(self) -> list[Section]:
+        return find_sections(self.editor.text)
+
+    def _cursor_section(
+        self, sections: list[Section] | None = None
+    ) -> Section | None:
+        """The section the cursor is in."""
+        sections = self._sections() if sections is None else sections
+        if not sections or self.editor.text_input is None:
+            return None
+        # the cursor is the moving end of the selection, which is where a
+        # person thinks they are even when they have selected backwards.
+        offset = offset_of(self.editor.text, self.editor.selection.end)
+        return section_at(sections, offset)
+
+    def _no_sections_notice(self) -> None:
+        self.app.notify(
+            "No sections in this buffer. Start a line with `-- ## Name` to make one.",
+            severity="warning",
+        )
+
+    def action_show_sections(self) -> None:
+        """The section navigator: a filterable list of the buffer's headings."""
+        sections = self._sections()
+        if not sections:
+            self._no_sections_notice()
+            return
+        current = self._cursor_section(sections)
+
+        def picked(result: tuple[Section, str] | None) -> None:
+            if result is None:
+                self.editor.focus()
+                return
+            section, action = result
+            if action == "focus":
+                self.focus_section(section)
+            elif action == "run":
+                self.run_section(section)
+            else:
+                self.jump_to_section(section)
+
+        self.app.push_screen(
+            SectionsModal(
+                sections=sections,
+                current=current.index if current is not None else None,
+            ),
+            picked,
+        )
+
+    def action_run_section(self) -> None:
+        """Run every statement under the heading the cursor is in."""
+        sections = self._sections()
+        if not sections:
+            self._no_sections_notice()
+            return
+        section = self._cursor_section(sections)
+        if section is None:
+            return
+        self.run_section(section)
+
+    def action_focus_section(self) -> None:
+        """Open the section the cursor is in in its own tab."""
+        sections = self._sections()
+        if not sections:
+            self._no_sections_notice()
+            return
+        section = self._cursor_section(sections)
+        if section is None:
+            return
+        self.focus_section(section)
+
+    def jump_to_section(self, section: Section) -> None:
+        """Put the cursor on the section's first line of SQL."""
+        if self.editor.text_input is None:
+            return
+        row = section.body_row if not section.is_preamble else section.start_row
+        self.editor.text_input.selection = Selection.cursor((row, 0))
+        self.editor.text_input.scroll_cursor_visible(center=True, animate=False)
+        self.editor.focus()
+
+    def run_section(self, section: Section) -> None:
+        """Select the section's SQL and submit it.
+
+        Selecting rather than submitting the text directly is deliberate: the
+        app already runs "the selection" and splits it into statements, the run
+        bar's row limit still applies, and Duncan can see exactly what ran.
+        """
+        if self.editor.text_input is None:
+            return
+        text = self.editor.text
+        if not section_text(text, section, include_marker=False).strip():
+            self.app.notify(
+                f"Section '{section.name}' has no SQL under it.", severity="warning"
+            )
+            return
+        # Trim the span to the section's first and last non-whitespace character.
+        # The blank line before the next `-- ##` marker belongs, as far as the
+        # statement splitter is concerned, to the statement that marker heads:
+        # a selection that reaches into it runs the next section too.
+        start, end = section.body_start, section.end
+        while start < end and text[start].isspace():
+            start += 1
+        while end > start and text[end - 1].isspace():
+            end -= 1
+        self.editor.text_input.selection = Selection(
+            start=point_of(text, start), end=point_of(text, end)
+        )
+        self.editor.focus()
+        self.editor.post_message(CodeEditor.Submitted(text))
+
+    def focus_section(self, section: Section) -> None:
+        """Open one section in its own tab, to be written back when you leave."""
+        parent_id = self.active
+        if parent_id is None:
+            return
+        if parent_id in self.section_views:
+            self.app.notify(
+                "This tab is already one section. Close it to go back to the "
+                "whole script.",
+                severity="warning",
+            )
+            return
+        body = section_text(self.editor.text, section)
+        self.run_worker(
+            self._open_section_tab(parent_id, section, body), exclusive=False
+        )
+
+    async def _open_section_tab(
+        self, parent_id: str, section: Section, body: str
+    ) -> None:
+        # the marker rides along in the tab, so the section can be renamed
+        # there and the parent buffer follows when it is written back.
+        await self.action_new_buffer(
+            state=BufferState(selection=Selection(), text=body, name=section.name)
+        )
+        new_id = self.active
+        if new_id is None:
+            return
+        self.section_views[new_id] = SectionView(
+            parent_id=parent_id,
+            span=(section.start, section.end),
+            original=body,
+            name=section.name,
+        )
+
+    def apply_section_views(self) -> None:
+        """Write every section tab back into its parent."""
+        for buffer_id in list(self.section_views):
+            self.apply_section_view(buffer_id)
+
+    def apply_section_view(self, buffer_id: str) -> None:
+        """Write one section tab back into the buffer it came from.
+
+        The section is found in the parent by offset when the parent still has
+        the text this tab was opened with, and by heading name when it does
+        not -- the parent is an ordinary tab and can have been edited. When it
+        is neither, nothing is written and the notification says so, because
+        guessing at a span would overwrite somebody's work.
+        """
+        view = self.section_views.get(buffer_id)
+        if view is None:
+            return
+        state = self.buffer_states.get(buffer_id)
+        parent = self.buffer_states.get(view.parent_id)
+        if state is None:
+            return
+        if parent is None:
+            self.app.notify(
+                f"The tab '{view.name}' came from was closed, so it was not "
+                "written back.",
+                severity="warning",
+            )
+            self.section_views.pop(buffer_id, None)
+            return
+        if state.text == view.original:
+            return  # nothing was changed in the section tab
+
+        span: tuple[int, int] | None = None
+        if parent.text[view.span[0] : view.span[1]] == view.original:
+            span = view.span
+        else:
+            for candidate in find_sections(parent.text):
+                if candidate.name == view.name:
+                    span = (candidate.start, candidate.end)
+                    break
+        if span is None:
+            self.app.notify(
+                f"'{view.name}' is no longer in the tab it came from, so the "
+                "changes were not written back. They are still in this tab.",
+                severity="warning",
+                timeout=10,
+            )
+            return
+
+        updated, new_span = splice(parent.text, span, state.text)
+        self.buffer_states[view.parent_id] = EditorState(
+            text=updated,
+            selection=parent.selection,
+            scroll_offset=parent.scroll_offset,
+            undo_history=parent.undo_history,
+        )
+        view.span = new_span
+        view.original = state.text
 
     def _activate_cached_buffer(self, focus_index: int) -> None:
         """Reopens the buffer that was active when the cache was written."""

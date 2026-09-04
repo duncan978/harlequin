@@ -103,6 +103,26 @@ HARLEQUIN_ACTIONS = {
     ),
     "code_editor.close_buffer": Action(target=EditorCollection, action="close_buffer"),
     "code_editor.next_buffer": Action(target=EditorCollection, action="next_buffer"),
+    # Sections: `-- ## Name` blocks in the buffer (roadmap §3.4). There is no
+    # code folding to collapse the ones you are not reading, so these three are
+    # what a long script gets: jump between the headings, open one on its own,
+    # run one on its own.
+    "code_editor.show_sections": Action(
+        target=EditorCollection,
+        action="show_sections",
+        description="Sections",
+        show=True,
+    ),
+    "code_editor.focus_section": Action(
+        target=EditorCollection,
+        action="focus_section",
+        description="Focus Section",
+    ),
+    "code_editor.run_section": Action(
+        target=EditorCollection,
+        action="run_section",
+        description="Run Section",
+    ),
     "code_editor.run_query": Action(
         target=CodeEditor, action="submit", description="Run Query", show=True
     ),

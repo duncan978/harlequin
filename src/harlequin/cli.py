@@ -396,8 +396,9 @@ def build_cli(argv: Sequence[str]) -> click.Command:
         default=DEFAULT_THEME,
         show_default=True,
         help=(
-            "Set the theme (colors) of the Harlequin IDE. "
-            "Must be `harlequin` or the name of a Textual theme: "
+            "Set the theme (colors) of the Harlequin IDE. Either the PATH of a theme "
+            "file (.toml or .json holding the fields of a Textual theme), or "
+            "`harlequin` or the name of a Textual theme: "
             f"{ALL_THEMES}"
         ),
     )

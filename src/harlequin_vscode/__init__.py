@@ -21,6 +21,13 @@ VSCODE_EDITOR_BINDINGS = [
     HarlequinKeyBinding("ctrl+w", "code_editor.close_buffer"),
     HarlequinKeyBinding("ctrl+t", "code_editor.rename_buffer"),
     HarlequinKeyBinding("ctrl+k", "code_editor.next_buffer"),
+    # Sections. f11 as well as the chord, because a terminal that does not
+    # report ctrl+shift distinctly would otherwise leave the navigator -- and
+    # with it "focus section" and "run section", which it can also do --
+    # unreachable.
+    HarlequinKeyBinding("ctrl+shift+o,f11", "code_editor.show_sections"),
+    HarlequinKeyBinding("ctrl+shift+f", "code_editor.focus_section"),
+    HarlequinKeyBinding("ctrl+shift+enter", "code_editor.run_section"),
     HarlequinKeyBinding(
         "ctrl+enter,ctrl+j",
         "code_editor.run_query",

@@ -701,7 +701,8 @@ ColumnList {
     padding: 0;
 }
 
-ColumnList .column_filter {
+ColumnList .column_filter,
+SectionList .column_filter {
     border: none;
     height: 1;
     padding: 0 1;
@@ -709,11 +710,13 @@ ColumnList .column_filter {
     background: $background-lighten-1;
 }
 
-ColumnList .column_filter:focus {
+ColumnList .column_filter:focus,
+SectionList .column_filter:focus {
     background: $background-lighten-1;
 }
 
-ColumnList .column_list {
+ColumnList .column_list,
+SectionList .column_list {
     background: $background;
     background-tint: $background;
     border: round $border-color-nofocus;
@@ -723,23 +726,27 @@ ColumnList .column_list {
     padding: 0;
 }
 
-ColumnList:focus-within .column_list {
+ColumnList:focus-within .column_list,
+SectionList:focus-within .column_list {
     border: round $border-color-focus;
     border-title-color: $border-title-color-focus;
 }
 
-ColumnList .column_list > .option-list--option-highlighted {
+ColumnList .column_list > .option-list--option-highlighted,
+SectionList .column_list > .option-list--option-highlighted {
     background: $secondary;
     color: auto;
     text-style: none;
 }
 
-ColumnList .column_list > .option-list--option-hover {
+ColumnList .column_list > .option-list--option-hover,
+SectionList .column_list > .option-list--option-hover {
     color: $text;
     background: $boost;
 }
 
-ColumnList .column_list_footer {
+ColumnList .column_list_footer,
+SectionList .column_list_footer {
     dock: bottom;
     color: $text-muted;
     margin: 1 0 0 0;
@@ -752,13 +759,15 @@ DataCatalog ColumnList {
     padding: 0 1;
 }
 
-/* COLUMNS MODAL */
-ColumnsModal {
+/* COLUMNS MODAL, and the SECTION NAVIGATOR, which is the same shape */
+ColumnsModal,
+SectionsModal {
     align: center middle;
     padding: 0;
 }
 
-ColumnsModal #modal_outer {
+ColumnsModal #modal_outer,
+SectionsModal #modal_outer {
     margin: 2 4;
     width: 70%;
     max-width: 88;

@@ -4,7 +4,7 @@
         [--catalog-min-width N] [--catalog-side left|right] [--no-png]
 
 Writes one SVG per size and state (catalog as the app starts, catalog toggled with
-f9, results after a query) and, on macOS, a PNG next to each via `qlmanage`. The
+f9, the section navigator, results after a query) and, on macOS, a PNG next to each via `qlmanage`. The
 sizes default to a 13" half-screen tmux pane (94x52), the docs size (120x36), two
 thirds of a 32" (160x60) and a 13" full screen (188x53). The sample database is a
 few `reporting.*` tables, so the catalog and results have realistic names.
@@ -34,6 +34,20 @@ select carrier_name, count(*) as policies, sum(premium_cents) / 100.0 as premium
 from reporting.policy_sales
 where sold_at >= current_date - interval 30 day
 group by 1 order by 3 desc
+
+-- ## By state
+select state, count(*) as policies from reporting.policy_sales group by 1 order by 2 desc;
+
+-- ### Massachusetts only
+select * from reporting.policy_sales where state = 'MA' limit 20;
+
+-- ## Quote volume by vertical
+select vertical, count(*) as requests from reporting.quote_requests group by 1;
+"""
+"""A realistic working script: several related queries under `-- ##` headings.
+
+The headings are what the section navigator lists, so the sample has to have
+some -- and the deeper one is there because the navigator indents by level.
 """
 
 
@@ -95,6 +109,13 @@ async def render(
         await pilot.pause(0.3)
         shot(app, "f9")
         await pilot.press("f9")
+        # the section navigator, over whatever is behind it
+        await pilot.press("f11")
+        await pilot.pause(0.3)
+        shot(app, "sections")
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        # run just the section the cursor is in
         await pilot.press("ctrl+j")
         await pilot.pause(1.5)
         shot(app, "results")

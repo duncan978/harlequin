@@ -8,8 +8,13 @@ from textual.driver import Driver
 from textual.screen import Screen
 from textual.types import CSSPathType
 
-from harlequin.colors import HARLEQUIN_TEXTUAL_THEME
+from harlequin.colors import (
+    HARLEQUIN_TEXTUAL_THEME,
+    load_theme_file,
+    looks_like_a_theme_file,
+)
 from harlequin.exception import (
+    HarlequinError,
     HarlequinThemeError,
     pretty_error_message,
 )
@@ -42,8 +47,20 @@ class AppBase(App, inherit_bindings=False):
     ):
         super().__init__(driver_class, css_path, watch_css)
         self.register_theme(HARLEQUIN_TEXTUAL_THEME)
+        name = theme or "harlequin"
+        # A `--theme` that names a file is loaded and registered, so a generated palette can
+        # be handed to Harlequin exactly instead of being approximated by the nearest
+        # built-in name. Anything else is a theme name, as before.
         try:
-            self.theme = theme or "harlequin"
+            if theme and looks_like_a_theme_file(theme):
+                custom = load_theme_file(theme)
+                self.register_theme(custom)
+                name = custom.name
+        except HarlequinError as e:
+            self.exit(return_code=2, message=pretty_error_message(e))
+            return
+        try:
+            self.theme = name
         except InvalidThemeError:
             from harlequin.colors import VALID_THEMES
 
@@ -52,7 +69,8 @@ class AppBase(App, inherit_bindings=False):
                 (
                     f"No theme found with the name {theme}.\n"
                     "Supported themes changed in Harlequin v2.0.0. "
-                    "Theme must be `harlequin` or the name of a Textual Theme:\n"
+                    "Theme must be `harlequin`, the name of a Textual Theme, or the "
+                    "path of a theme file (.toml or .json):\n"
                     f"{valid_themes}"
                 ),
                 title="Harlequin couldn't load your theme.",

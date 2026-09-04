@@ -7,6 +7,7 @@ from harlequin.components.help_screen import HelpScreen
 from harlequin.components.history_screen import HistoryScreen
 from harlequin.components.results_viewer import ResultsTable, ResultsViewer
 from harlequin.components.run_query_bar import RunQueryBar
+from harlequin.components.sections_modal import SectionList, SectionsModal
 from harlequin.components.text_modal import CellViewModal, ErrorModal, TextModal
 
 __all__ = [
@@ -22,6 +23,8 @@ __all__ = [
     "DebugInfoScreen",
     "ResultsViewer",
     "RunQueryBar",
+    "SectionList",
+    "SectionsModal",
     "DataCatalog",
     "HarlequinTree",
     "HistoryScreen",

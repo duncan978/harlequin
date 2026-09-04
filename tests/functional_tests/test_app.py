@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Awaitable, Callable, cast
 
@@ -8,6 +9,7 @@ from textual.message import Message
 from textual.worker import Worker, WorkerState
 
 from harlequin import Harlequin
+from harlequin.adapter import HarlequinAdapter
 from harlequin.app import QueriesExecuted, QuerySubmitted, ResultsFetched
 from harlequin.components import ErrorModal
 
@@ -628,3 +630,28 @@ async def test_worker_state_change_without_error_is_ignored(
         await pilot.pause()
         assert len(app.screen_stack) == 1
         assert app.is_running
+
+
+@pytest.mark.asyncio
+async def test_a_theme_file_is_registered_and_applied(
+    duckdb_adapter: type[HarlequinAdapter],
+    tmp_path: Path,
+) -> None:
+    """`--theme` takes a path, so a generated palette can be matched exactly.
+
+    Until this existed Harlequin could only be handed a theme by name, so a
+    terminal set up from a generated palette could only be matched by whichever
+    built-in came closest (roadmap §5.19).
+    """
+    path = tmp_path / "bark.toml"
+    path.write_text('primary = "#c26b4f"\nbackground = "#191110"\ndark = true\n')
+    app = Harlequin(
+        duckdb_adapter([":memory:"], no_init=True),
+        connection_hash="foo",
+        theme=str(path),
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.theme == "bark"
+        assert app.current_theme.background == "#191110"
+        assert app.current_theme.primary == "#c26b4f"
