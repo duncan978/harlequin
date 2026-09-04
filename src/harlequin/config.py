@@ -136,6 +136,7 @@ TUI_ONLY_KEYS = (
     "viewer_max_rows",
     "catalog_side",
     "catalog_min_width",
+    "catalog_exclude",
 )
 """Profile keys the IDE reads and a headless caller must drop.
 

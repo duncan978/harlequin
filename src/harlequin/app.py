@@ -254,6 +254,7 @@ class Harlequin(AppBase):
         show_s3: str | None = None,
         catalog_side: str = "left",
         catalog_min_width: int | str | None = None,
+        catalog_exclude: Sequence[str] | str | None = None,
         export_path: Path | str | None = None,
         viewer_max_rows: int | str | None = 100_000,
         query_limit: int | str | None = None,
@@ -284,6 +285,14 @@ class Harlequin(AppBase):
         # "right" is left, so a typo in the config file costs the default
         # layout rather than the app.
         self.catalog_side = "right" if str(catalog_side).lower() == "right" else "left"
+        # Glob patterns the Data Catalog hides. A config file can spell one pattern as a
+        # bare string, so a string is one pattern rather than a list of its characters.
+        if catalog_exclude is None:
+            self.catalog_exclude: tuple[str, ...] = ()
+        elif isinstance(catalog_exclude, str):
+            self.catalog_exclude = (catalog_exclude,)
+        else:
+            self.catalog_exclude = tuple(str(pattern) for pattern in catalog_exclude)
         # under this many columns the catalog is an overlay (see `narrow`). 0 or
         # None keeps the column at every width, which is also what tests and other
         # library callers get by default; the CLI supplies its own default.
@@ -393,6 +402,7 @@ class Harlequin(AppBase):
         self.data_catalog = DataCatalog(
             show_files=self.show_files,
             show_s3=self.show_s3,
+            catalog_exclude=self.catalog_exclude,
         )
         self.editor_collection = EditorCollection(
             language="sql", classes="hide-tabs"

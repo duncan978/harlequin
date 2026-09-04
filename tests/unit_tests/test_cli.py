@@ -141,6 +141,7 @@ def test_default(
         show_s3=None,
         catalog_side="left",
         catalog_min_width=120,
+        catalog_exclude=(),
         export_path=None,
         ssh_tunnel=None,
     )

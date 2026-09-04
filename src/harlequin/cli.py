@@ -532,6 +532,16 @@ def build_cli(argv: Sequence[str]) -> click.Command:
         ),
     )
     @click.option(
+        "--catalog-exclude",
+        multiple=True,
+        help=(
+            "A glob pattern the Data Catalog hides, matched against each item's name "
+            "and its dotted path, case-insensitively; repeatable. Hiding an item hides "
+            "everything under it, e.g. --catalog-exclude 'ci_pr_*' for a warehouse "
+            "carrying a schema per CI run. Queries are unaffected."
+        ),
+    )
+    @click.option(
         "--config",
         help=(
             "Run the configuration wizard to create or update a Harlequin config file."
@@ -661,6 +671,7 @@ def build_cli(argv: Sequence[str]) -> click.Command:
                 ctx.exit(2)
         show_s3: str | None = config.pop("show_s3", None)
         catalog_side: str = config.pop("catalog_side", None) or "left"
+        catalog_exclude = config.pop("catalog_exclude", None) or ()
         catalog_min_width = config.pop("catalog_min_width", None)
         if catalog_min_width is None:
             catalog_min_width = DEFAULT_CATALOG_MIN_WIDTH
@@ -731,6 +742,7 @@ def build_cli(argv: Sequence[str]) -> click.Command:
                 show_s3=show_s3,
                 catalog_side=catalog_side,
                 catalog_min_width=catalog_min_width,
+                catalog_exclude=catalog_exclude,
                 export_path=export_path,
                 ssh_tunnel=tunnel,
             )

@@ -122,6 +122,7 @@ class DataCatalog(TabbedContent, can_focus=True):
         disabled: bool = False,
         show_files: Path | None = None,
         show_s3: str | None = None,
+        catalog_exclude: Sequence[str] = (),
     ):
         super().__init__(
             *titles,
@@ -133,9 +134,11 @@ class DataCatalog(TabbedContent, can_focus=True):
         )
         self.show_files = show_files
         self.show_s3 = show_s3
+        self.catalog_exclude = tuple(catalog_exclude)
+        """Glob patterns the database tree hides (`catalog_exclude`)."""
 
     def on_mount(self) -> None:
-        self.database_tree = DatabaseTree()
+        self.database_tree = DatabaseTree(exclude=self.catalog_exclude)
         self.database_context_menu = ContextMenu()
         self.add_pane(
             TabPane("Databases", self.database_tree, self.database_context_menu)

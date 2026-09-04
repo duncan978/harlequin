@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 from asyncio import PriorityQueue
 from collections import deque
-from typing import TYPE_CHECKING, Generator, Iterable, TypeVar
+from typing import TYPE_CHECKING, Generator, Iterable, Sequence, TypeVar
 
 from rich.style import Style
 from rich.text import Text, TextType
@@ -66,6 +67,36 @@ LOADING_ITEM = CatalogItem(
 """Sentinel data for the placeholder shown under a node while its children load."""
 
 
+def unqualify(qualified_identifier: str) -> str:
+    """The dotted path an `exclude` pattern is written against.
+
+    An item's `qualified_identifier` is quoted the way its database quotes
+    identifiers (`"mydb"."myschema"."mytable"`), and a pattern nobody can read
+    is a pattern nobody will write, so the quotes come off before matching.
+    """
+    return qualified_identifier.replace('"', "").replace("`", "")
+
+
+def is_excluded(item: CatalogItem, patterns: Sequence[str]) -> bool:
+    """Whether `catalog_exclude` hides this item, and so its whole subtree.
+
+    A pattern is a glob, matched case-insensitively against both the item's own
+    label and its unquoted dotted path, so `ci_pr_*` hides every schema with
+    that prefix in any database and `mydb.staging.*` hides one schema's
+    relations. Matching the label as well as the path is what makes the short
+    form work at any depth.
+    """
+    if not patterns:
+        return False
+    label = item.label.casefold()
+    path = unqualify(item.qualified_identifier).casefold()
+    return any(
+        fnmatch.fnmatchcase(label, pattern.casefold())
+        or fnmatch.fnmatchcase(path, pattern.casefold())
+        for pattern in patterns
+    )
+
+
 class DatabaseTree(HarlequinTree[CatalogItem], inherit_bindings=False):
     catalog: var[Catalog | None] = var["Catalog | None"](
         None, init=False, always_update=True
@@ -77,7 +108,10 @@ class DatabaseTree(HarlequinTree[CatalogItem], inherit_bindings=False):
         id: str | None = None,  # noqa: A002
         classes: str | None = None,
         disabled: bool = False,
+        exclude: Sequence[str] = (),
     ) -> None:
+        self.exclude = tuple(exclude)
+        """Glob patterns whose matching items never enter the tree."""
         self._load_queue: PriorityQueue[tuple[int, int, InteractiveCatalogItem]] = (
             PriorityQueue()
         )
@@ -435,7 +469,11 @@ class DatabaseTree(HarlequinTree[CatalogItem], inherit_bindings=False):
             node: The Tree node to populate.
             content: The CatalogItems to populate the node with.
         """
-        items = list(content)
+        # The one place nodes are added, so the one place `catalog_exclude` has to
+        # hold: the first build, a reload, and a lazy fetch all arrive here. An
+        # excluded item takes its subtree with it, because children are only ever
+        # fetched from a node that exists.
+        items = [item for item in content if not is_excluded(item, self.exclude)]
         async with self.lock:
             node.remove_children()
         for offset in range(0, len(items), POPULATE_CHUNK_SIZE):
@@ -496,8 +534,11 @@ class DatabaseTree(HarlequinTree[CatalogItem], inherit_bindings=False):
             finally:
                 item.loaded = True
 
+        # Also filtered here, not only in _populate_node: this return is what the
+        # app awaits when it walks the tree to a named item (a buffer's identifiers),
+        # and that walk should not find its way into a hidden subtree.
         return sorted(
-            item.children,
+            (child for child in item.children if not is_excluded(child, self.exclude)),
             key=lambda catalog_item: catalog_item.label,
         )
 

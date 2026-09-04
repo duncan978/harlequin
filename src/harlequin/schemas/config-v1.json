@@ -318,6 +318,9 @@
         },
         "catalog_min_width": {
           "description": "Read by the harlequin IDE; hsql ignores it. See `harlequin --help`."
+        },
+        "catalog_exclude": {
+          "description": "Read by the harlequin IDE; hsql ignores it. See `harlequin --help`."
         }
       }
     },
