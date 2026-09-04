@@ -576,6 +576,10 @@ class Harlequin(AppBase):
             return
         self.editor.insert_text_at_selection(text=message.insert_name)
         self.editor.focus()
+        # narrow mode: the name is in, so the drawer's job is done. Focus moving
+        # to the editor closes it anyway, a refresh later; say so outright.
+        if self.narrow:
+            self.catalog_overlay = False
 
     def _recycle_message(self, message: Message) -> None:
         """Re-post a message we can't handle yet, while we wait for the editor."""
@@ -987,6 +991,9 @@ class Harlequin(AppBase):
 
     def on_resize(self, event: events.Resize) -> None:
         self._check_narrow(event.size.width)
+        if self.narrow and self.catalog_overlay:
+            # the editor's height has changed under an open drawer
+            self.call_after_refresh(self._size_drawer)
 
     def _check_narrow(self, width: int) -> None:
         self.narrow = 0 < self.catalog_min_width and width < self.catalog_min_width
@@ -998,7 +1005,31 @@ class Harlequin(AppBase):
         self.data_catalog.set_class(narrow, "overlay")
         self.data_catalog.set_class(self.catalog_side == "left", "dock-left")
         self.run_query_bar.set_narrow(narrow)
+        self.run_query_bar.set_catalog_side(self.catalog_side)
+        self._size_drawer()
         self._apply_catalog_visibility()
+
+    def _size_drawer(self) -> None:
+        """Stop the drawer above the Run Query Bar.
+
+        The drawer is a child of `#panes`, so a full-height overlay covers the
+        bar and the results as well as the editor, and `Run` and `Limit` go with
+        them. The editor starts at the top of the pane like the drawer does, so
+        the editor's height is exactly the room above the bar. It changes when
+        the results split moves, so this is called on every open, not once.
+        """
+        if not hasattr(self, "data_catalog"):
+            return
+        # region, not size: the editor's outer box, borders included, is the
+        # box the drawer has to match
+        height = self.editor_collection.region.height if self.narrow else 0
+        if height > 0:
+            self.data_catalog.styles.height = height
+        else:
+            # not narrow, or the editor has not been laid out yet: let the CSS
+            # say what the height is (a full-height column, or a full drawer)
+            self.data_catalog.styles.clear_rule("height")
+        self.data_catalog.refresh(layout=True)
 
     def watch_catalog_overlay(self, showing: bool) -> None:
         if not hasattr(self, "run_query_bar") or not self.narrow:
@@ -1007,6 +1038,7 @@ class Harlequin(AppBase):
         had_focus = self.data_catalog.has_focus or self.data_catalog.has_focus_within
         self.data_catalog.disabled = not showing
         if showing:
+            self._size_drawer()
             self.data_catalog.focus()
         elif had_focus and self.editor is not None:
             self.editor.focus()
@@ -1379,8 +1411,10 @@ class Harlequin(AppBase):
         else:
             panes.move_child(self.data_catalog, before=main_panel)
             self.catalog_side = "left"
-        # the narrow-mode drawer docks by class, not by DOM order
+        # the narrow-mode drawer docks by class, not by DOM order, and its
+        # button on the run bar sits on the edge the drawer comes out of
         self.data_catalog.set_class(self.catalog_side == "left", "dock-left")
+        self.run_query_bar.set_catalog_side(self.catalog_side)
         self.notify(
             f"Data Catalog moved to the {self.catalog_side}. "
             f'Set `catalog_side = "{self.catalog_side}"` in your config to keep it.'

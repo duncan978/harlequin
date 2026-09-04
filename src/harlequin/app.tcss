@@ -799,9 +799,10 @@ RenameModal Input {
 
 /* NARROW MODE (fork). Under catalog_min_width the Data Catalog is a drawer over
    the main panel instead of a column beside it: its own layer (dock alone would
-   reserve space), full pane height above the footer, solid background so the
-   editor doesn't bleed through. Kept together, at the end, to stay clear of
-   upstream's blocks when rebasing. */
+   reserve space), as tall as the editor so the Run Query Bar stays clear (the
+   app sets that height), solid background so the editor doesn't bleed through.
+   Kept together, at the end, to stay clear of upstream's blocks when
+   rebasing. */
 #panes {
     layers: main overlay;
 }
@@ -810,6 +811,8 @@ DataCatalog.overlay {
     layer: overlay;
     dock: right;
     width: 32;
+    /* the app sets an inline height so the drawer stops above the Run Query
+       Bar; this is the fallback for before the editor has been laid out */
     height: 100%;
     background: $background;
 }
@@ -838,6 +841,12 @@ RunQueryBar Button#catalog_button {
     }
     &.hidden {
         display: none;
+    }
+    /* `catalog_side = "right"`: the button sits on the drawer's own edge, and
+       the 1fr run buttons right-align against it in the room that is left */
+    &.dock-right {
+        dock: right;
+        margin: 0 0 0 1;
     }
 }
 

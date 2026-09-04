@@ -304,3 +304,82 @@ async def test_f6_opens_the_drawer_and_f7_moves_it(
         await pilot.pause()
         assert app.data_catalog.region.x != before
         assert app.data_catalog.has_class("dock-left") == (app.catalog_side == "left")
+
+
+@pytest.mark.asyncio
+async def test_the_drawer_stops_above_the_run_query_bar(
+    narrow_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """The gripe this fixed: a full-height drawer covered `Run` and `Limit`."""
+    app = narrow_app
+    async with app.run_test(size=NARROW) as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("f9")
+        await pilot.pause()
+        catalog = app.data_catalog.region
+        bar = app.run_query_bar.region
+        editor = app.editor_collection.region
+        assert catalog.y == editor.y, "starts at the top of the pane"
+        assert catalog.height == editor.height, "as tall as the editor it covers"
+        assert catalog.bottom <= bar.y, "and no taller: the run bar is clear"
+        # the run buttons are on the drawer's side of the bar under
+        # catalog_side = "right", so they are the ones that had to stay visible
+        for widget_id in ("#run_query", "#limit_input", "#catalog_button"):
+            widget = app.query_one(widget_id)
+            assert not widget.region.overlaps(catalog), f"{widget_id} is covered"
+
+
+@pytest.mark.asyncio
+async def test_the_catalog_button_sits_on_the_drawers_edge(
+    narrow_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    app = narrow_app
+    async with app.run_test(size=NARROW) as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        bar = app.run_query_bar
+        button = bar.catalog_button.region
+        run_buttons = app.query_one("#run_buttons").region
+        if app.catalog_side == "right":
+            assert bar.catalog_button.has_class("dock-right")
+            assert button.right >= run_buttons.right, (
+                "on the right, past the run buttons"
+            )
+        else:
+            assert not bar.catalog_button.has_class("dock-right")
+            assert button.x < run_buttons.x, "on the left, before the run buttons"
+
+        # f7 moves the drawer, and the button goes with it
+        await pilot.press("f7")
+        await pilot.pause()
+        await pilot.pause()
+        assert bar.catalog_button.has_class("dock-right") == (
+            app.catalog_side == "right"
+        )
+
+
+@pytest.mark.asyncio
+async def test_inserting_a_name_closes_the_drawer(
+    narrow_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """Duncan's UAT answer (roadmap §6): insert is the end of the look-up."""
+    app = narrow_app
+    async with app.run_test(size=NARROW) as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        assert app.editor is not None
+        await pilot.press("f9")
+        await pilot.pause()
+        assert app.catalog_overlay
+        tree = app.data_catalog.database_tree
+        tree.focus()
+        await pilot.pause()
+        tree.cursor_line = 0
+        tree.action_submit()  # what enter on a catalog node does
+        await pilot.pause()
+        await pilot.pause()
+        assert app.editor.text, "a name was inserted"
+        assert not app.catalog_overlay
+        assert app.data_catalog.disabled
+        assert app.editor.has_focus_within

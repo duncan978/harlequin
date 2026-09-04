@@ -46,6 +46,8 @@ class RunQueryBar(Horizontal):
         self.show_cancel_button = show_cancel_button
         self.narrow = False
         """Compact labels, for a terminal under the app's `catalog_min_width`."""
+        self.catalog_side = "left"
+        """Which edge the narrow-mode drawer comes out of; the button follows it."""
         self.runs_selection = False
         """Whether the run button would run the editor's selection, not the buffer."""
         super().__init__(
@@ -122,6 +124,16 @@ class RunQueryBar(Horizontal):
         self.catalog_button.set_class(not narrow, "hidden")
         self.profile_label.update(self._profile_text())
         self.run_button.label = self._run_text()
+
+    def set_catalog_side(self, side: str) -> None:
+        """Put the Catalog button on the edge the drawer comes out of.
+
+        Left of the bar reads as a control for something on the left; the drawer
+        under `catalog_side = "right"` comes out of the other edge, so the
+        button docks right and the run buttons take the room that is left.
+        """
+        self.catalog_side = "right" if str(side).lower() == "right" else "left"
+        self.catalog_button.set_class(self.catalog_side == "right", "dock-right")
 
     def apply_configured_limit(self) -> None:
         """Put the box in the state `--limit` asked for.
