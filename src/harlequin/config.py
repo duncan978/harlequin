@@ -62,6 +62,7 @@ from typing import (
     MutableMapping,
     Optional,
     Sequence,
+    Union,
     cast,
 )
 
@@ -182,6 +183,7 @@ class Provenance:
     default_profile: list[Path] = field(default_factory=list)
     profiles: dict[str, list[Path]] = field(default_factory=dict)
     keymaps: dict[str, list[Path]] = field(default_factory=dict)
+    commands: dict[str, list[Path]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -235,6 +237,56 @@ class Problems:
         )
 
 
+COMMAND_NAME_PROG = re.compile(r"^[A-Za-z0-9_-]+$")
+"""What a `[commands.x]` may be called. It becomes an action named `command.x`, and a
+keymap binds it by that name, so a name with a dot or a space in it could not be
+bound."""
+
+
+class CommandConfig(msgspec.Struct, forbid_unknown_fields=True):
+    """One `[commands.<name>]` table: a program to run, and what it is given.
+
+    The IDE runs these; `hsql` runs no commands, ever, and shares this struct only so
+    that the two commands can read the same file -- without the field, a `[commands]`
+    table would make `hsql` refuse the whole config (`forbid_unknown_fields`). `hsql
+    --config validate` checks the table and otherwise ignores it.
+
+    `command` is argv, or a string the platform's own quoting rules split. There is no
+    `shell = true` and there are no placeholders: a pipeline goes in a script, where it
+    can be read, tested and version-controlled, and a command that interpolated the
+    buffer into a shell string would be one keystroke from running it.
+    """
+
+    command: Union[str, List[str]]
+    description: Optional[str] = None
+    stdin: Literal[
+        "none",
+        "selection",
+        "statement",
+        "section",
+        "buffer",
+        "results",
+        "pinned_results",
+    ] = "none"
+    output: Literal["none", "notify", "replace", "insert", "new-buffer"] = "none"
+    timeout: float = 120.0
+    max_rows: Optional[int] = None
+    """A cap on the rows handed over, for the two result sources only."""
+
+    def argv(self) -> list[str]:
+        """The command as argv, split under the platform's rules if it is a string."""
+        if isinstance(self.command, str):
+            import shlex
+
+            if sys.platform == "win32":
+                return [
+                    token.strip('"')
+                    for token in shlex.split(self.command, posix=False)
+                ]
+            return shlex.split(self.command)
+        return list(self.command)
+
+
 class Config(msgspec.Struct, forbid_unknown_fields=True):
     """A config file's contents, and also several of them merged.
 
@@ -246,11 +298,25 @@ class Config(msgspec.Struct, forbid_unknown_fields=True):
     profiles: Dict[str, Profile] = msgspec.field(default_factory=dict)
     keymaps: Dict[str, List[Dict[str, Any]]] = msgspec.field(default_factory=dict)
     """A binding's own keys are `HarlequinKeyMap.from_config()`'s to check."""
+    commands: Dict[str, CommandConfig] = msgspec.field(default_factory=dict)
+    """Programs the IDE can run with the editor or the results as context.
+
+    Read from a file, but honoured only from one the user owns rather than one a
+    repository ships: `load_commands()` applies that rule, and it is the one thing in
+    this module where *which file* said something changes whether it is obeyed.
+    """
 
     def to_dict(self) -> dict[str, Any]:
         """What this config would look like written back to a file."""
         return {
-            key: value
+            key: (
+                {
+                    name: msgspec.structs.asdict(command)
+                    for name, command in value.items()
+                }
+                if key == "commands"
+                else value
+            )
             for key, value in msgspec.structs.asdict(self).items()
             # the one thing TOML cannot write. Everything else is kept, however
             # falsy: `default_profile = ""` is a mistake worth being able to see.
@@ -455,6 +521,45 @@ def load_profile_and_keymaps(
     )
 
 
+def load_commands(
+    config_path: Path | None, provenance: Provenance | None = None
+) -> tuple[dict[str, CommandConfig], list[Path]]:
+    """The `[commands]` tables the IDE will honour, and the files it refused them from.
+
+    Every other kind of config value is obeyed wherever it is written. A command is
+    argv Harlequin will execute, so this one is not: a `[commands]` table is honoured
+    only from a file the *user* put somewhere -- an explicit `--config-path`, the user
+    config directory, or `$HOME` -- and ignored from a `harlequin.toml` or
+    `pyproject.toml` that happened to be in the working directory, which is to say from
+    a repository someone cloned.
+
+    By directory, not by file name, so `~/.harlequin.toml` found as a "cwd file" because
+    Harlequin was launched from home still counts. The second return value is the files
+    whose commands were ignored, for the caller to tell the user about: silence there
+    would look like a config that does not work.
+    """
+    commands: dict[str, CommandConfig] = {}
+    ignored: list[Path] = []
+    trusted_directories = {
+        user_config_path(appname="harlequin", appauthor=False).resolve(),
+        Path.home().resolve(),
+    }
+    explicit = config_path.resolve() if config_path is not None else None
+    for path, from_file in _read_config_files(config_path):
+        if not from_file.commands:
+            continue
+        resolved = path.resolve()
+        if resolved != explicit and resolved.parent not in trusted_directories:
+            ignored.append(path)
+            continue
+        if provenance is not None:
+            for name in from_file.commands:
+                provenance.commands.setdefault(name, []).append(path)
+        for name, command in from_file.commands.items():
+            commands.setdefault(name, command)
+    return commands, ignored
+
+
 def validate_config_files(
     config_path: Path | None,
     *,
@@ -506,6 +611,13 @@ def validate_config_files(
         for name, bindings in from_file.keymaps.items():
             _validate_keymap(
                 name, bindings, problems=problems.at(path, f"keymaps.{name}")
+            )
+        for name, command in from_file.commands.items():
+            # Validated wherever it is written, and honoured only from a file the user
+            # owns (`load_commands()`): a table this run would ignore is still a table
+            # its author will edit, and reporting it is how they learn which it is.
+            _validate_command(
+                name, command, problems=problems.at(path, f"commands.{name}")
             )
         _merge(from_file, into=merged, source=path, provenance=provenance)
 
@@ -834,6 +946,47 @@ def _validate_profile(
     )
 
 
+def _validate_command(
+    name: str, command: CommandConfig, *, problems: Problems
+) -> None:
+    """One `[commands.x]` table through the checks the IDE runs when it next starts.
+
+    `stdin` and `output` are `Literal`s, so msgspec has already refused a value that is
+    not one of them by the time this runs; what is left is the shape of the name, the
+    argv, and the two options that only make sense together.
+
+    A name cannot collide with a built-in action: an action from config is registered as
+    `command.<name>`, a namespace nothing built-in is in. That is why this file does not
+    import `harlequin.actions` to find out -- doing so would pull Textual and every
+    component into `hsql`, which runs no commands at all.
+    """
+    if not COMMAND_NAME_PROG.match(name):
+        problems.add(
+            f"Command name {name!r} may only hold letters, digits, - and _, "
+            "because a keymap binds it as command.<name>."
+        )
+    if not command.argv():
+        problems.add("Command names no program to run.", key="command")
+    if command.timeout <= 0:
+        problems.add(
+            f"Command sets timeout = {command.timeout}, which would end it before it "
+            "started.",
+            key="timeout",
+        )
+    if command.max_rows is not None:
+        if command.stdin not in ("results", "pinned_results"):
+            problems.add(
+                f"Command sets max_rows, which caps the rows handed over, but its "
+                f"stdin is {command.stdin!r} rather than results or pinned_results.",
+                key="max_rows",
+            )
+        elif command.max_rows <= 0:
+            problems.add(
+                f"Command sets max_rows = {command.max_rows}; it must be at least 1.",
+                key="max_rows",
+            )
+
+
 def _validate_keymap(
     name: str, bindings: list[dict[str, Any]], *, problems: Problems
 ) -> None:
@@ -1008,6 +1161,8 @@ def _merge(
             provenance.profiles.setdefault(name, []).append(source)
         for name in from_file.keymaps:
             provenance.keymaps.setdefault(name, []).append(source)
+        for name in from_file.commands:
+            provenance.commands.setdefault(name, []).append(source)
 
     if into.default_profile is None:
         into.default_profile = from_file.default_profile
@@ -1015,6 +1170,8 @@ def _merge(
         into.profiles.setdefault(profile_name, profile)
     for keymap_name, bindings in from_file.keymaps.items():
         into.keymaps.setdefault(keymap_name, bindings)
+    for command_name, command in from_file.commands.items():
+        into.commands.setdefault(command_name, command)
 
 
 _MISSING = object()

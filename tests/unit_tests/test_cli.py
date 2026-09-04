@@ -144,6 +144,10 @@ def test_default(
         catalog_exclude=(),
         export_path=None,
         ssh_tunnel=None,
+        # commands come from config, and the CLI reads them separately from
+        # everything else because where they were written decides whether they run
+        commands={},
+        adapter_name="duckdb",
     )
 
 

@@ -1,5 +1,6 @@
 from harlequin.components.code_editor import CodeEditor, EditorCollection
 from harlequin.components.columns_modal import ColumnsModal
+from harlequin.components.command_menu import CommandList, CommandMenu
 from harlequin.components.data_catalog import DataCatalog, HarlequinTree
 from harlequin.components.debug_info import DebugInfoScreen
 from harlequin.components.export_screen import ExportScreen, export_callback
@@ -24,6 +25,8 @@ __all__ = [
     "ResultsViewer",
     "RunQueryBar",
     "SectionList",
+    "CommandList",
+    "CommandMenu",
     "SectionsModal",
     "DataCatalog",
     "HarlequinTree",

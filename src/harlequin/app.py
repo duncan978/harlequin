@@ -34,9 +34,10 @@ from textual.widget import AwaitMount, Widget
 from textual.widgets import Button, Footer, Input
 from textual.worker import Worker, WorkerState
 from textual_fastdatatable import DataTable
+from textual_fastdatatable.backend import ArrowBackend
 
 from harlequin import HarlequinConnection
-from harlequin.actions import HARLEQUIN_ACTIONS
+from harlequin.actions import Action, build_actions
 from harlequin.adapter import HarlequinAdapter
 from harlequin.app_base import AppBase
 from harlequin.autocomplete import completer_factory
@@ -53,6 +54,14 @@ from harlequin.catalog_cache import (
     get_catalog_cache,
     update_catalog_cache,
 )
+from harlequin.commands import (
+    CommandInvocation,
+    CommandResult,
+    TableSnapshot,
+    build_env,
+    results_manifest,
+    run_command,
+)
 from harlequin.components import (
     CodeEditor,
     DataCatalog,
@@ -67,11 +76,13 @@ from harlequin.components import (
     export_callback,
 )
 from harlequin.components.column_list import ColumnList
+from harlequin.components.command_menu import CommandMenu
 from harlequin.components.confirm_modal import ConfirmModal
 from harlequin.components.data_catalog import ContextMenu
 from harlequin.components.data_catalog.tree import HarlequinTree
 from harlequin.components.debug_info import AdapterDebugInfo, HarlequinDebugInfo
 from harlequin.config import (
+    CommandConfig,
     get_highest_priority_existing_config_file,
     load_config,
     load_profile_and_keymaps,
@@ -85,6 +96,7 @@ from harlequin.exception import (
     HarlequinConfigError,
     HarlequinConnectionError,
     HarlequinError,
+    HarlequinExternalError,
     pretty_error_message,
     pretty_print_error,
 )
@@ -202,6 +214,16 @@ class TransactionModeChanged(Message):
         self.new_mode = new_mode
 
 
+class ExternalCommandFinished(Message):
+    """A configured command exited; what it said, and how."""
+
+    def __init__(self, name: str, result: CommandResult, tmpdir: str | None) -> None:
+        super().__init__()
+        self.name = name
+        self.result = result
+        self.tmpdir = tmpdir
+
+
 class CompletersReady(Message):
     def __init__(
         self, word_completer: WordCompleter, member_completer: MemberCompleter
@@ -221,6 +243,21 @@ _PARTIAL_FAILURE_WORKER_NOTIFICATIONS: dict[str, str] = {
 """Toast text for the workers whose failure is partial: the app stays usable,
 so their errors surface as a notification rather than an error modal.
 """
+
+
+def _harlequin_version() -> str:
+    """What `HARLEQUIN_VERSION` tells a command it is talking to.
+
+    From the installed metadata, the way `--version` reads it, so a command sees the
+    same string the user would. Unknown rather than fatal where the package metadata is
+    missing (an editable checkout someone has not installed).
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("harlequin")
+    except PackageNotFoundError:  # pragma: no cover -- an uninstalled checkout
+        return "unknown"
 
 
 class Harlequin(AppBase):
@@ -259,6 +296,8 @@ class Harlequin(AppBase):
         viewer_max_rows: int | str | None = 100_000,
         query_limit: int | str | None = None,
         ssh_tunnel: SshTunnel | None = None,
+        commands: dict[str, CommandConfig] | None = None,
+        adapter_name: str | None = None,
         driver_class: Union[Type[Driver], None] = None,
         css_path: Union[CSSPathType, None] = None,
         watch_css: bool = False,
@@ -371,6 +410,18 @@ class Harlequin(AppBase):
             user_defined_keymaps = []
 
         self.keymap_names = keymap_names
+        # Commands from config, and the action registry that includes them. A keymap
+        # binds `command.<name>`, so the registry has to exist before any key is bound.
+        self.commands: dict[str, CommandConfig] = dict(commands or {})
+        self.adapter_name = adapter_name
+        self.actions = build_actions(self.commands)
+        self._approved_commands: set[str] = set()
+        """Commands the user has confirmed in this process.
+
+        Session-scoped on purpose: a config file must not be able to approve its own
+        subprocesses, and there is no trust store to go stale. One Yes per command per
+        Harlequin session is the price of that.
+        """
         try:
             self.all_keymaps = load_keymap_plugins(
                 user_defined_keymaps=user_defined_keymaps
@@ -880,7 +931,9 @@ class Harlequin(AppBase):
     @on(ResultsFetched)
     async def load_tables(self, message: ResultsFetched) -> None:
         for id_, result in message.results.items():
-            await self.results_viewer.push_table(table_id=id_, result=result)
+            await self.results_viewer.push_table(
+                table_id=id_, result=result, elapsed=message.elapsed
+            )
             self.append_to_history(
                 query_text=result.statement.sql,
                 # the rows the database returned, not the rows the viewer kept
@@ -927,7 +980,9 @@ class Harlequin(AppBase):
             if keymap is None:
                 continue
             for binding in keymap.bindings:
-                action = HARLEQUIN_ACTIONS[binding.action]
+                action = self._action_for(binding.action, keymap_name)
+                if action is None:
+                    continue
                 if action.target is not None and isinstance(
                     message.widget, action.target
                 ):
@@ -1188,7 +1243,9 @@ class Harlequin(AppBase):
                 continue
             for binding in keymap.bindings:
                 required_bindings.pop(binding.action, None)
-                action = HARLEQUIN_ACTIONS[binding.action]
+                action = self._action_for(binding.action, keymap_name)
+                if action is None:
+                    continue
                 if action.target is not None:
                     targets: DOMQuery[Widget] | list[App] = self.query(action.target)
                     if not targets:
@@ -1212,7 +1269,7 @@ class Harlequin(AppBase):
                         pretty_print_error(e)
                         self.exit(return_code=2)
         for action_name, key in required_bindings.items():
-            action = HARLEQUIN_ACTIONS[action_name]
+            action = self.actions[action_name]
             try:
                 bind(
                     target=self,
@@ -1591,6 +1648,368 @@ class Harlequin(AppBase):
         if self.editor is None:
             return []
         return self.editor.selected_queries()
+
+    # ------------------------------------------------------------------------
+    # Commands from config: running someone else's program with the editor or
+    # the results as context. See harlequin/commands.py for the process side.
+    # ------------------------------------------------------------------------
+
+    def _action_for(self, action_name: str, keymap_name: str) -> Action | None:
+        """The action a binding names, or None with one notification saying so.
+
+        A keymap can name an action that does not exist -- a typo, a plug-in that is not
+        installed, or a `command.x` whose `[commands.x]` table is in a config file this
+        run ignored. Before commands came from config that was a `KeyError` during
+        mount,
+        which is to say a crash on start-up with a traceback; it is a feature's ordinary
+        failure mode now, so it costs that binding and nothing else.
+        """
+        action = self.actions.get(action_name)
+        if action is None:
+            self.notify(
+                f"Keymap {keymap_name!r} binds {action_name!r}, which is not an action "
+                "Harlequin knows. That binding is not in force.",
+                severity="warning",
+                timeout=10,
+            )
+        return action
+
+    def _command_keys(self) -> dict[str, str]:
+        """Which key each configured command is on, for the menu to show.
+
+        Read off the keymaps in force rather than remembered when they are bound: the
+        menu is built when it is opened, and this is the only description of the keys
+        that cannot fall out of step with them.
+        """
+        keys: dict[str, str] = {}
+        for keymap_name in self.keymap_names:
+            keymap = self._get_keymap(keymap_name=keymap_name)
+            if keymap is None:
+                continue
+            for binding in keymap.bindings:
+                if not binding.action.startswith("command."):
+                    continue
+                name = binding.action[len("command.") :]
+                keys.setdefault(name, binding.key_display or binding.keys)
+        return keys
+
+    def action_show_command_menu(self) -> None:
+        """The command menu: every `[commands.x]` a config file defined.
+
+        The answer to a keyspace with nothing left in it -- a command needs no key of
+        its own to be reachable, and this one key reaches all of them.
+        """
+        if not self.commands:
+            self.notify(
+                "No commands are configured. Add a [commands.<name>] table to your "
+                "config file to run a program with the editor or the results as input.",
+                severity="warning",
+                timeout=10,
+            )
+            return
+
+        def picked(name: str | None) -> None:
+            # the action, not `run_action`: the menu already knows which command was
+            # picked, and going back through the action string would only give the name
+            # a chance to be quoted wrongly
+            if name is not None:
+                self.action_run_command(name)
+
+        self.push_screen(
+            CommandMenu(commands=self.commands, keys=self._command_keys()), picked
+        )
+
+    def action_run_command(self, name: str) -> None:
+        """Run the configured command called `name`.
+
+        Everything the command is given is gathered here, on the main thread, before
+        the worker starts: an Arrow table is immutable and would be safe to read from a
+        thread, but the rule that nothing off the main thread touches a widget is worth
+        keeping literally, so the worker is handed argv, an environment, bytes and a
+        directory path and knows nothing else.
+
+        The empty cases end here too, with a notification rather than a run: a command
+        that was asked to send the selection when nothing is selected has nothing to do,
+        and running it with empty stdin would make that the tool's problem to report.
+        """
+        command = self.commands.get(name)
+        if command is None:
+            self.notify(f"No command named {name!r} is configured.", severity="error")
+            return
+        try:
+            invocation = self._gather_invocation(name, command)
+        except HarlequinError as e:
+            self.notify(e.msg, severity="warning", timeout=8)
+            return
+        if invocation is None:
+            return
+        if name in self._approved_commands:
+            self._run_external_command(invocation)
+            return
+
+        def confirmed(approved: bool | None) -> None:
+            if not approved:
+                return
+            self._approved_commands.add(name)
+            self._run_external_command(invocation)
+
+        # The consent gate. A config file is data, and this is the one place where data
+        # becomes a program Harlequin executes, so a human says yes to it once per
+        # process. There is deliberately no config key to skip this: a file cannot be
+        # allowed to approve itself.
+        self.push_screen(
+            ConfirmModal(
+                prompt=(
+                    f"Run [b]{' '.join(invocation.argv)}[/b]?\n\n"
+                    f"{command.description or name} is configured in a config file. "
+                    "Harlequin will run it with your environment, once per press."
+                )
+            ),
+            confirmed,
+        )
+
+    def _gather_invocation(
+        self, name: str, command: CommandConfig
+    ) -> CommandInvocation | None:
+        """Everything the worker needs, or None when there is nothing to send."""
+        import tempfile
+
+        editor = self.editor_collection
+        stdin_bytes = b""
+        tmpdir: str | None = None
+        files: list[str] = []
+        source = command.stdin
+
+        if source in ("results", "pinned_results"):
+            snapshots = self._result_snapshots(source)
+            if not snapshots:
+                self.notify(
+                    "Run a query first."
+                    if source == "results"
+                    else "No results are pinned.",
+                    severity="warning",
+                )
+                return None
+            tmpdir = tempfile.mkdtemp(prefix="harlequin-cmd-")
+            stdin_text, files = results_manifest(
+                snapshots,
+                stdin_source=source,
+                tmpdir=Path(tmpdir),
+                max_rows=command.max_rows,
+            )
+            stdin_bytes = stdin_text.encode("utf-8")
+        elif source != "none":
+            text = self._editor_context(source)
+            if text is None:
+                return None
+            stdin_bytes = text.encode("utf-8")
+
+        argv = command.argv()
+        if not argv:
+            self.notify(
+                f"Command {name!r} names no program to run.", severity="error"
+            )
+            return None
+        return CommandInvocation(
+            name=name,
+            argv=argv,
+            env=build_env(
+                name=name,
+                stdin_source=source,
+                version=_harlequin_version(),
+                profile=self.active_profile_name,
+                adapter=self.adapter_name,
+                buffer_name=editor.active_buffer_name(),
+                buffer_path=(
+                    str(path) if (path := editor.active_buffer_path()) else None
+                ),
+            ),
+            stdin=stdin_bytes,
+            timeout=command.timeout,
+            tmpdir=tmpdir,
+            files=files,
+        )
+
+    def _editor_context(self, source: str) -> str | None:
+        """The text a `stdin` source asks for, or None with a notification.
+
+        `statement` is what Run would run, `section` is what Run Section would run, and
+        both come from the same code those actions use -- a second definition of "the
+        statement under the cursor" would sooner or later disagree with the one that
+        executes.
+        """
+        editor = self.editor_collection.current_editor
+        if source == "selection":
+            text = editor.selected_text
+            if not text.strip():
+                self.notify("Nothing is selected.", severity="warning")
+                return None
+            return text
+        if source == "buffer":
+            if not editor.text.strip():
+                self.notify("The buffer is empty.", severity="warning")
+                return None
+            return editor.text
+        if source == "statement":
+            queries = editor.selected_queries()
+            if not queries:
+                self.notify("The buffer is empty.", severity="warning")
+                return None
+            return ";\n".join(query.rstrip().rstrip(";") for query in queries) + ";\n"
+        if source == "section":
+            section = self.editor_collection.section_under_cursor()
+            if section is None:
+                self.notify(
+                    "The cursor is not in a section. Start a line with `-- ## Name` "
+                    "to make one.",
+                    severity="warning",
+                )
+                return None
+            text, _name = section
+            if not text.strip():
+                self.notify("That section has no SQL under it.", severity="warning")
+                return None
+            return text
+        return None
+
+    def _result_snapshots(self, source: str) -> list[TableSnapshot]:
+        """The result tables a command asked for, as plain data.
+
+        `results` is the one on screen; `pinned_results` is every pinned tab in tab
+        order. A table whose grid has gone (a tab closed between the key and here) is
+        skipped rather than sent as an empty one.
+        """
+        viewer = self.results_viewer
+        if source == "pinned_results":
+            pane_ids = viewer.pinned_pane_ids()
+        else:
+            visible = viewer.visible_pane_id()
+            pane_ids = [visible] if visible else []
+        snapshots: list[TableSnapshot] = []
+        for pane_id in pane_ids:
+            table = viewer.table_for(pane_id)
+            if table is None or not isinstance(table.backend, ArrowBackend):
+                continue
+            snapshots.append(
+                TableSnapshot(
+                    pane_id=pane_id,
+                    sql=viewer.sql_for(pane_id),
+                    columns=list(
+                        zip(
+                            table.plain_column_labels,
+                            table.column_type_labels,
+                            strict=False,
+                        )
+                    ),
+                    data=table.backend.source_data,
+                    fetched_row_count=table.fetched_row_count,
+                    fetch_truncated=bool(table.fetch_truncated),
+                    label=viewer.label_for(pane_id),
+                    pinned=pane_id in viewer.pinned_pane_ids(),
+                    elapsed=viewer.elapsed_for(pane_id),
+                )
+            )
+        return snapshots
+
+    @work(
+        thread=True,
+        exclusive=True,
+        exit_on_error=False,
+        group="external_commands",
+        description="Running a configured command",
+    )
+    def _run_external_command(self, invocation: CommandInvocation) -> None:
+        """Run one command on a worker thread and post the result back.
+
+        Exclusive within its group: two commands at once would race over stdout and,
+        worse, over the same temp directory. A query already running is untouched --
+        this worker is not in that group.
+        """
+        try:
+            result = run_command(
+                invocation.argv,
+                env=invocation.env,
+                stdin=invocation.stdin,
+                timeout=invocation.timeout,
+            )
+        except OSError as e:
+            result = CommandResult(
+                returncode=-1,
+                stdout="",
+                stderr=(
+                    f"Harlequin could not run {invocation.argv[0]!r}: {e}\n\n"
+                    "A configured command has to be on the PATH Harlequin was started "
+                    f"with:\n{os.environ.get('PATH', '')}"
+                ),
+            )
+        self.post_message(
+            ExternalCommandFinished(
+                name=invocation.name, result=result, tmpdir=invocation.tmpdir
+            )
+        )
+
+    @on(ExternalCommandFinished)
+    async def apply_command_output(self, message: ExternalCommandFinished) -> None:
+        """What the command said, applied on the main thread.
+
+        The temp directory goes as soon as the child is gone: the command was told to
+        copy what it wants to keep, and a directory of query results is not something to
+        leave in `/tmp` because a tool might come back for it.
+        """
+        import shutil
+
+        if message.tmpdir:
+            shutil.rmtree(message.tmpdir, ignore_errors=True)
+        command = self.commands.get(message.name)
+        title = (command.description if command else None) or message.name
+        result = message.result
+
+        if result.timed_out:
+            self._push_error_modal(
+                title=title,
+                header=(
+                    f"{title} did not finish in "
+                    f"{command.timeout if command else 0:g} s."
+                ),
+                error=HarlequinExternalError(
+                    title=title, msg=result.stderr or result.stdout or "No output."
+                ),
+            )
+            return
+        if result.returncode != 0:
+            self._push_error_modal(
+                title=title,
+                header=f"The command exited with status {result.returncode}.",
+                error=HarlequinExternalError(
+                    title=title,
+                    msg=(result.stderr or result.stdout or "").strip()
+                    or "The command wrote nothing to stderr.",
+                ),
+            )
+            return
+        if result.stderr.strip():
+            # Tools log to stderr and still succeed; that is a note, not a failure.
+            self.notify(result.stderr.strip().splitlines()[0], severity="warning")
+
+        mode = command.output if command else "none"
+        if mode == "none" or not result.stdout.strip():
+            # Empty stdout is never applied, in any mode: a tool that returned nothing
+            # must not blank the query it was given.
+            if mode == "notify" and not result.stdout.strip():
+                self.notify(f"{title} finished.")
+            return
+        if mode == "notify":
+            self.notify(result.first_line)
+        elif mode == "replace":
+            self.editor_collection.current_editor.text = result.stdout
+        elif mode == "insert":
+            editor = self.editor_collection.current_editor
+            if editor.text_input is not None:
+                editor.text_input.insert(result.stdout)
+        elif mode == "new-buffer":
+            await self.editor_collection.insert_buffer_with_text(
+                query_text=result.stdout
+            )
 
     def _push_error_modal(self, title: str, header: str, error: BaseException) -> None:
         self.push_screen(

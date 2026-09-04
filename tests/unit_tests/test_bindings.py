@@ -37,7 +37,14 @@ RESERVED = {
 # the terminal must encode it and, inside tmux, tmux must forward it. Measured on
 # Ghostty + tmux 3.7c with `extended-keys on`, it does not -- the shift is
 # dropped, `ctrl+shift+o` arrives as `ctrl+o`, the binding never fires, and Open
-# Query runs instead.
+# Query runs instead. Re-measured 2026-09-04 with `tmux set -s extended-keys
+# always`, which forwards extended keys whether or not the app asked: the
+# ctrl+shift chords still do not arrive, so there is no tmux option that buys
+# them and this rule is not provisional.
+#
+# `alt`+letter, measured the same day on the same stack, does arrive -- which is
+# the channel a modified chord has here, and what the IDE's configured commands
+# are bound on.
 #
 # So a ctrl+shift+letter chord may be *a* spelling of an action, never its only
 # one. Pair it with an ASCII control chord, which no layer can lose.

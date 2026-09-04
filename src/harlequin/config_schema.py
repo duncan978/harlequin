@@ -34,6 +34,7 @@ from harlequin.config import (
     CLI_ONLY_SSH_KEYS,
     DEFAULT_ADAPTER,
     TUI_ONLY_KEYS,
+    CommandConfig,
     Config,
     adapter_options_model,
     sluggify_option_name,
@@ -69,6 +70,11 @@ DESCRIPTIONS = {
     ),
     "keymaps": (
         "Named key bindings for the harlequin IDE, one array of bindings each."
+    ),
+    "commands": (
+        "Programs the harlequin IDE can run with the editor or the results as "
+        "input, one table each. Honoured only from a config file in your home or "
+        "config directory, or one named with --config-path; hsql runs none of them."
     ),
     "profile": (
         "A profile's options: the ones each command reads for itself, plus the "
@@ -132,6 +138,7 @@ def build_schema(
     document["$defs"] = {
         "profile": profile,
         "keybinding": _keybinding(),
+        "CommandConfig": _command(),
         **{
             _options_key(name): _adapter_options(
                 name, declared, owned=set(profile["properties"])
@@ -165,6 +172,26 @@ def _top_level() -> dict[str, Any]:
             "items": {"$ref": "#/$defs/keybinding"},
         },
     )
+    properties["commands"].update(description=DESCRIPTIONS["commands"])
+    return schema
+
+
+def _command() -> dict[str, Any]:
+    """One `[commands.x]` table, from the struct that parses it.
+
+    Kept under the struct's own name because that is the `$ref` msgspec writes into
+    the top-level `commands` property; renaming it here would dangle that reference.
+    """
+    schema: dict[str, Any] = msgspec.json.schema(CommandConfig)["$defs"][
+        "CommandConfig"
+    ]
+    schema["title"] = "Command"
+    schema["description"] = (
+        "A program the IDE runs with the editor or the results as input: `command` is "
+        "argv (or a string), `stdin` says what it is given, `output` what is done with "
+        "what it writes back."
+    )
+    schema["additionalProperties"] = False
     return schema
 
 

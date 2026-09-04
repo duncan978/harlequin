@@ -16,6 +16,7 @@ from harlequin.config import (
     _discover_config_files,
     _search_directories,
     get_highest_priority_existing_config_file,
+    load_commands,
     load_config,
     load_profile,
     load_profile_and_keymaps,
@@ -1399,3 +1400,173 @@ class TestInterpolatingEnvironmentVariables:
         path = self.config(tmp_path, '[profiles.prod]\npassword = "${MYPASSWORD}"\n')
         raw = ConfigFile(path).relevant_config
         assert raw["profiles"]["prod"]["password"] == "${MYPASSWORD}"
+
+
+class TestCommands:
+    """`[commands]`: parsed like everything else, honoured unlike everything else.
+
+    A command is argv Harlequin will execute, so where the table was written decides
+    whether it is obeyed -- a `harlequin.toml` in a repository someone cloned must not
+    be able to run a program on their machine.
+    """
+
+    TABLE = """
+[commands.send_results]
+command = ["ale-handoff", "attach", "--kind", "results"]
+description = "Send results to Claude"
+stdin = "results"
+output = "notify"
+timeout = 15
+max_rows = 200
+"""
+
+    def _dirs(
+        self,
+        tmp_path_factory: pytest.TempPathFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[Path, Path, Path]:
+        home = tmp_path_factory.mktemp("home")
+        config = tmp_path_factory.mktemp("config")
+        cwd = tmp_path_factory.mktemp("cwd")
+        monkeypatch.setattr("harlequin.config._search_directories", _search_directories)
+        monkeypatch.setattr(Path, "cwd", lambda: cwd)
+        monkeypatch.setattr(Path, "home", lambda: home)
+        monkeypatch.setattr("harlequin.config.user_config_path", lambda **_: config)
+        return home, config, cwd
+
+    def test_a_commands_table_parses(self, tmp_path: Path) -> None:
+        path = tmp_path / "harlequin.toml"
+        path.write_text(self.TABLE)
+        config = load_config(config_path=path)
+        command = config.commands["send_results"]
+        assert command.argv() == ["ale-handoff", "attach", "--kind", "results"]
+        assert command.stdin == "results"
+        assert command.output == "notify"
+        assert command.timeout == 15
+        assert command.max_rows == 200
+
+    def test_a_command_as_a_string_is_split(self, tmp_path: Path) -> None:
+        path = tmp_path / "harlequin.toml"
+        path.write_text('[commands.fmt]\ncommand = "my-tool --kind \'two words\'"\n')
+        (command,) = load_config(config_path=path).commands.values()
+        assert command.argv() == ["my-tool", "--kind", "two words"]
+        assert command.stdin == "none", "a command is given nothing unless it asks"
+        assert command.output == "none"
+
+    def test_the_nearest_file_that_defines_a_command_wins(
+        self, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home, config_dir, _cwd = self._dirs(tmp_path_factory, monkeypatch)
+        (config_dir / "harlequin.toml").write_text(
+            '[commands.send]\ncommand = ["nearer"]\n'
+        )
+        (home / "harlequin.toml").write_text(
+            '[commands.send]\ncommand = ["farther"]\n'
+            '[commands.other]\ncommand = ["also-mine"]\n'
+        )
+        commands, ignored = load_commands(config_path=None)
+        assert commands["send"].argv() == ["nearer"]
+        assert commands["other"].argv() == ["also-mine"], "both files are read"
+        assert ignored == []
+
+    def test_a_commands_table_in_the_working_directory_is_ignored(
+        self, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _home, _config_dir, cwd = self._dirs(tmp_path_factory, monkeypatch)
+        (cwd / "harlequin.toml").write_text(self.TABLE)
+        commands, ignored = load_commands(config_path=None)
+        assert commands == {}, "a cloned repository does not get to run a program"
+        assert ignored == [cwd / "harlequin.toml"], "and the user is told which file"
+
+    def test_an_explicit_config_path_is_honoured_wherever_it_is(
+        self, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _home, _config_dir, cwd = self._dirs(tmp_path_factory, monkeypatch)
+        named = cwd / "named.toml"
+        named.write_text(self.TABLE)
+        commands, ignored = load_commands(config_path=named)
+        assert "send_results" in commands, "--config-path is the user saying so"
+        assert ignored == []
+
+    def test_a_config_file_in_home_counts_even_when_home_is_the_cwd(
+        self, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The trust rule is by directory, so `~/.harlequin.toml` found as a "cwd file"
+        # because Harlequin was launched from home is still the user's own file.
+        home = tmp_path_factory.mktemp("home_is_cwd")
+        config = tmp_path_factory.mktemp("config_2")
+        monkeypatch.setattr("harlequin.config._search_directories", _search_directories)
+        monkeypatch.setattr(Path, "cwd", lambda: home)
+        monkeypatch.setattr(Path, "home", lambda: home)
+        monkeypatch.setattr("harlequin.config.user_config_path", lambda **_: config)
+        (home / ".harlequin.toml").write_text(self.TABLE)
+        commands, ignored = load_commands(config_path=None)
+        assert "send_results" in commands
+        assert ignored == []
+
+    def test_provenance_records_the_file_a_command_came_from(
+        self, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home, _config_dir, _cwd = self._dirs(tmp_path_factory, monkeypatch)
+        (home / "harlequin.toml").write_text(self.TABLE)
+        provenance = Provenance()
+        load_commands(config_path=None, provenance=provenance)
+        assert provenance.commands["send_results"] == [home / "harlequin.toml"]
+
+    @pytest.mark.parametrize(
+        "table,expected",
+        [
+            (
+                '[commands."send results"]\ncommand = ["x"]\n',
+                "may only hold letters",
+            ),
+            ("[commands.send]\ncommand = []\n", "names no program"),
+            ("[commands.send]\ncommand = [\"x\"]\ntimeout = 0\n", "before it started"),
+            (
+                '[commands.send]\ncommand = ["x"]\nmax_rows = 200\n',
+                "rather than results",
+            ),
+            (
+                '[commands.send]\ncommand = ["x"]\nstdin = "results"\nmax_rows = 0\n',
+                "at least 1",
+            ),
+            (
+                # msgspec refuses a value outside the Literal before any check here
+                # runs, and names the value it would not take
+                '[commands.send]\ncommand = ["x"]\nstdin = "everything"\n',
+                "Invalid enum value",
+            ),
+        ],
+    )
+    def test_validation_says_what_is_wrong(
+        self,
+        tmp_path: Path,
+        table: str,
+        expected: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        path = tmp_path / "harlequin.toml"
+        path.write_text(table)
+        problems = validate_config_files(
+            config_path=path,
+            adapter_class=lambda _name: None,
+            command_options=set(),
+        )
+        assert problems, "a broken command table is a problem to report"
+        assert any(expected in problem.message for problem in problems), [
+            problem.message for problem in problems
+        ]
+
+    def test_a_good_commands_table_validates_clean(self, tmp_path: Path) -> None:
+        # the acceptance check for `hsql --config validate`: hsql runs no commands, and
+        # must still accept a config file that defines them
+        path = tmp_path / "harlequin.toml"
+        path.write_text(self.TABLE)
+        assert (
+            validate_config_files(
+                config_path=path,
+                adapter_class=lambda _name: None,
+                command_options=set(),
+            )
+            == []
+        )

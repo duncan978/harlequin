@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Mapping
 
 from textual.screen import Screen
 from textual_textarea.text_editor import TextAreaPlus
@@ -19,6 +19,8 @@ from harlequin.components.data_catalog import ContextMenu
 
 if TYPE_CHECKING:
     from textual.widget import Widget
+
+    from harlequin.config import CommandConfig
 
 
 @dataclass
@@ -45,6 +47,12 @@ HARLEQUIN_ACTIONS = {
         action="show_help_screen",
         description="Help",
         show=True,
+    ),
+    "show_command_menu": Action(
+        target=None,
+        action="show_command_menu",
+        description="Commands",
+        priority=True,
     ),
     "focus_next": Action(target=Screen, action="focus_next"),
     "focus_previous": Action(target=Screen, action="focus_previous"),
@@ -383,3 +391,33 @@ HARLEQUIN_ACTIONS = {
         target=HistoryScreen, action="cancel", description="Cancel"
     ),
 }
+
+
+COMMAND_ACTION_PREFIX = "command."
+"""The namespace an action from config lives in, so it cannot collide with
+a built-in."""
+
+
+def build_actions(
+    commands: Mapping[str, "CommandConfig"] | None = None,
+) -> dict[str, Action]:
+    """Every action a keymap may bind: the built-ins, plus one per configured command.
+
+    A command's action is app-level (`target=None`) so that it fires whichever pane has
+    focus -- a command that sends the visible result has to work from the results grid,
+    and one that sends the buffer has to work from the editor.
+
+    `priority=True` for the same reason `launch_external_editor` has it: a focused
+    `TextArea` swallows any key that carries a printable character, which is every
+    `alt`-chord, and a binding that only worked when the editor was not focused would
+    be a binding that mostly did nothing.
+    """
+    actions = dict(HARLEQUIN_ACTIONS)
+    for name, command in (commands or {}).items():
+        actions[f"{COMMAND_ACTION_PREFIX}{name}"] = Action(
+            target=None,
+            action=f"run_command('{name}')",
+            description=command.description or f"Run {name}",
+            priority=True,
+        )
+    return actions

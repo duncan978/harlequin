@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Iterable, Mapping
 
 from textual import events
 from textual.app import ComposeResult
@@ -11,10 +11,12 @@ from textual.widgets import Markdown, Static
 from harlequin.components.text_modal import VerticalSuppressClicks
 
 if TYPE_CHECKING:
+    from harlequin.actions import Action
     from harlequin.keymap import HarlequinKeyMap
 
 SECTIONS: list[tuple[str, str]] = [
     ("", "Anywhere in Harlequin"),
+    ("command", "Commands"),
     ("code_editor", "Query Editor"),
     ("data_catalog", "Data Catalog"),
     ("results_viewer", "Results Viewer"),
@@ -66,21 +68,30 @@ def humanize_key(key: str) -> str:
     return f"{prefix}{NAMED_KEYS.get(key, key)}"
 
 
-def humanize_action(action: str) -> str:
+def humanize_action(action: str, actions: Mapping[str, "Action"] | None = None) -> str:
     """A label for an action, preferring the one the action declares.
 
     Most actions declare no description -- they are footer-invisible -- so the
     fallback reads the name, which is written to be read: `cursor_word_left`
     is already "Cursor Word Left".
+
+    `actions` is the registry the app actually bound, which is the built-ins plus one
+    action per configured command. Without it a `command.x` row would be labelled from
+    its name, when the whole point of a command's `description` is that its author
+    already said what it does.
     """
     # imported here: `harlequin.actions` imports this package, so importing it
     # at module scope closes the cycle
     from harlequin.actions import HARLEQUIN_ACTIONS
 
-    declared = HARLEQUIN_ACTIONS.get(action)
+    declared = (actions or HARLEQUIN_ACTIONS).get(action)
     if declared is not None and declared.description:
         return declared.description
     _, _, leaf = action.rpartition(".")
+    if action.startswith("command."):
+        # A configured command declares its own description, which the keymap does not
+        # carry; where it declared none, its name is what there is to say.
+        return leaf.replace("_", " ").replace("-", " ").capitalize()
     return leaf.replace("_", " ").title()
 
 
@@ -103,7 +114,10 @@ def _section(
     return lines
 
 
-def keymap_markdown(keymaps: Iterable["HarlequinKeyMap"]) -> str:
+def keymap_markdown(
+    keymaps: Iterable["HarlequinKeyMap"],
+    actions: Mapping[str, "Action"] | None = None,
+) -> str:
     """Render the bindings actually in force as a Markdown page.
 
     Generated rather than written down: the page is only worth having if it
@@ -131,13 +145,18 @@ def keymap_markdown(keymaps: Iterable["HarlequinKeyMap"]) -> str:
         if not rows:
             continue
         claimed.update(rows)
-        lines.extend(_section(heading, [(bindings[a], humanize_action(a)) for a in rows]))
+        lines.extend(
+            _section(
+                heading, [(bindings[a], humanize_action(a, actions)) for a in rows]
+            )
+        )
 
     leftovers = [action for action in order if action not in claimed]
     if leftovers:
         lines.extend(
             _section(
-                "Other", [(bindings[a], humanize_action(a)) for a in leftovers]
+                "Other",
+                [(bindings[a], humanize_action(a, actions)) for a in leftovers],
             )
         )
 
@@ -183,7 +202,11 @@ class HelpScreen(ModalScreen):
         with VerticalSuppressClicks(id="modal_outer"):
             yield Static(" ".join(self.header_text), id="modal_header")
             with VerticalScroll(id="modal_inner"):
-                yield Markdown(markdown=keymap_markdown(self._active_keymaps()))
+                yield Markdown(
+                    markdown=keymap_markdown(
+                        self._active_keymaps(), getattr(self.app, "actions", None)
+                    )
+                )
             yield Static(
                 "Scroll with arrows. Press any other key to continue.",
                 id="modal_footer",

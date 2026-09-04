@@ -20,12 +20,13 @@ from textual.widget import Widget
 from textual.widgets import Button, Footer, Input, Label, LoadingIndicator, Static
 from textual_fastdatatable import DataTable
 
-from harlequin.actions import HARLEQUIN_ACTIONS
+from harlequin.actions import build_actions
 from harlequin.app_base import AppBase
 from harlequin.colors import YELLOW
 from harlequin.config import (
     ConfigFile,
     get_highest_priority_existing_config_file,
+    load_commands,
     load_profile_and_keymaps,
 )
 from harlequin.copy_widgets import NoFocusLabel, PathInput
@@ -463,11 +464,16 @@ class HarlequinKeys(AppBase):
         description="Loading bindings from plug-ins and config",
     )
     def load_bindings(self) -> None:
+        # The user's configured commands are actions too, so `harlequin --keys` has to
+        # list them: a command with no key is exactly the thing someone opens this
+        # screen to give one to.
+        commands, _ignored = load_commands(self.config_path)
+        actions = build_actions(commands)
         displayed_bindings = {
             format_action(action): HarlequinKeyBinding(
                 keys="", action=action, key_display=""
             )
-            for action in HARLEQUIN_ACTIONS
+            for action in actions
         }
 
         try:

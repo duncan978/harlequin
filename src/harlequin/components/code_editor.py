@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Union
 
 from sqlfmt.api import Mode, format_string
@@ -12,7 +13,7 @@ from textual.geometry import Offset
 from textual.message import Message
 from textual.reactive import reactive
 from textual.timer import Timer
-from textual.widgets import Tab, Tabs, TextArea
+from textual.widgets import Input, Tab, Tabs, TextArea
 from textual.widgets.text_area import EditHistory, Location, Selection
 from textual.worker import Worker, WorkerState
 from textual_textarea import TextAreaSaved, TextEditor
@@ -24,9 +25,9 @@ from harlequin.autocomplete import (
     WordCompleter,
     find_symbols,
 )
-from harlequin.components.text_modal import ErrorModal
 from harlequin.components.rename_modal import RenameModal
 from harlequin.components.sections_modal import SectionsModal
+from harlequin.components.text_modal import ErrorModal
 from harlequin.editor_cache import BufferState, load_cache
 from harlequin.exception import HarlequinExternalError
 from harlequin.external import launch_external_editor
@@ -245,8 +246,40 @@ class CodeEditor(TextEditor, inherit_bindings=False):
 
     def on_text_area_saved(self, message: TextAreaSaved) -> None:
         self.app.notify(f"Editor contents saved to {message.path}")
+        self._remember_path(Path(message.path))
         if hasattr(self.app, "data_catalog"):
             self.app.data_catalog.update_file_tree()
+
+    @on(Input.Submitted, "#textarea__open_input")
+    def remember_opened_path(self, message: Input.Submitted) -> None:
+        """Record the file an Open put in this buffer.
+
+        `textual-textarea` posts a message for a Save and none for an Open, so the only
+        place the opened path exists is the footer input it was typed into. This handler
+        is on the same node and the same selector as the parent's `open_file`, which is
+        what makes it run at all: `message.stop()` there stops the message bubbling to
+        an *ancestor*, not the other handlers on the widget itself.
+
+        Deliberately does not stop the message, and does not open anything -- the
+        parent's handler is what reads the file, and shows its own error modal when it
+        cannot. `is_file()` is the guard against recording a path that failed to open;
+        a path that opened and was then deleted is a stale entry nothing can prevent,
+        and the consumer of this checks the file itself.
+        """
+        path = Path(message.input.value).expanduser()
+        if path.is_file():
+            self._remember_path(path)
+
+    def _remember_path(self, path: Path) -> None:
+        """Tell the collection which file the active buffer is showing.
+
+        The collection owns the mapping because it owns the buffers: this widget is one
+        editor that every tab's state is swapped through, so a path kept here would
+        follow the user from one buffer to the next.
+        """
+        collection = self.parent
+        if isinstance(collection, EditorCollection):
+            collection.remember_buffer_path(path)
 
     def on_text_area_clipboard_error(self) -> None:
         if not self.has_shown_clipboard_error:
@@ -370,6 +403,11 @@ class EditorCollection(Vertical):
         # replaces a state wholesale on every tab switch, which would take the
         # name with it.
         self.buffer_names: dict[str, str] = {}
+        # Which file each buffer was last opened from or saved to. Beside the states
+        # for the same reason the names are, and deliberately NOT in the editor cache:
+        # putting it there would change the pickle's format, and a path is cheap to
+        # lose -- a buffer whose path is forgotten is a buffer you save once.
+        self.buffer_paths: dict[str, Path] = {}
         # tabs that are one section of another tab; see SectionView.
         self.section_views: dict[str, SectionView] = {}
         self.loaded_buffer_id: str | None = None
@@ -381,6 +419,37 @@ class EditorCollection(Vertical):
     def compose(self) -> ComposeResult:
         yield self.tabs
         yield self.editor
+
+    def remember_buffer_path(self, path: Path) -> None:
+        """Record the file the active buffer is showing."""
+        buffer_id = self.active
+        if buffer_id is not None:
+            self.buffer_paths[buffer_id] = path
+
+    def active_buffer_path(self) -> Path | None:
+        """The file the active buffer was last opened from or saved to.
+
+        None where there is none, which is the ordinary case for a scratch buffer and
+        also the case after a restart: paths are not cached, so a buffer restored from
+        the cache has no path until it is opened or saved again. Something that needs
+        the path is expected to say so rather than guess.
+        """
+        buffer_id = self.active
+        return self.buffer_paths.get(buffer_id) if buffer_id is not None else None
+
+    def active_buffer_name(self) -> str:
+        """What the active tab is called: the user's name for it, else `Tab n`."""
+        buffer_id = self.active
+        if buffer_id is None:
+            return ""
+        named = self.buffer_names.get(buffer_id)
+        if named:
+            return named
+        try:
+            tab = self.tabs.get_tab(buffer_id)
+        except Exception:  # noqa: BLE001 -- a tab that is gone has no label
+            return buffer_id
+        return str(tab.label) if tab is not None else buffer_id
 
     @property
     def current_editor(self) -> CodeEditor:
@@ -539,6 +608,7 @@ class EditorCollection(Vertical):
             if closed_buffer_id is not None:
                 self.buffer_states.pop(closed_buffer_id, None)
                 self.buffer_names.pop(closed_buffer_id, None)
+                self.buffer_paths.pop(closed_buffer_id, None)
                 self.section_views.pop(closed_buffer_id, None)
                 self.tabs.remove_tab(closed_buffer_id)
         else:
@@ -640,6 +710,21 @@ class EditorCollection(Vertical):
             ),
             picked,
         )
+
+    def section_under_cursor(self) -> tuple[str, str] | None:
+        """The text and the name of the section the cursor is in, or None.
+
+        The heading is kept: a section handed to another program without its `-- ##`
+        line loses the only thing that says what it is for. Same parser as the section
+        actions, so "the section the cursor is in" has one definition.
+        """
+        sections = self._sections()
+        if not sections:
+            return None
+        section = self._cursor_section(sections)
+        if section is None:
+            return None
+        return section_text(self.editor.text, section), section.name
 
     def action_run_section(self) -> None:
         """Run every statement under the heading the cursor is in."""

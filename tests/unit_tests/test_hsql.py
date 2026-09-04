@@ -1623,7 +1623,15 @@ def schema_of(res: Result) -> dict[str, Any]:
 def test_config_schema_is_a_json_schema(hsql: Hsql) -> None:
     schema = schema_of(hsql("--config", "schema"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-    assert set(schema["properties"]) == {"default_profile", "profiles", "keymaps"}
+    assert set(schema["properties"]) == {
+        "default_profile",
+        "profiles",
+        "keymaps",
+        # hsql runs no commands, and still describes the table: one schema covers the
+        # file both commands read, or a config file would fail to validate under one
+        # of them
+        "commands",
+    }
     assert schema["$defs"]["profile"]["properties"]["limit"]["type"] == "integer"
 
 

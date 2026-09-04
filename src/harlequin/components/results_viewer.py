@@ -184,6 +184,13 @@ class ResultsViewer(TabbedContent, can_focus=True):
         self._next_tab_number = 0
         self._pinned: set[str] = set()
         self._sql_by_pane: dict[str, str] = {}
+        self._elapsed_by_pane: dict[str, float] = {}
+        """How long each result took to fetch, as its run reported it.
+
+        Recorded here rather than asked of the table, because it is a fact about the
+        run and not about the grid, and a configured command that hands a result to
+        another program is expected to say how long it took.
+        """
         self._names: dict[str, str] = {}
         self._activate_next_push = False
         super().__init__()
@@ -198,6 +205,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
         self.clear_panes()
         self._pinned.clear()
         self._sql_by_pane.clear()
+        self._elapsed_by_pane.clear()
         self._names.clear()
         self._next_tab_number = 0
         self.add_class("hide-tabs")
@@ -213,6 +221,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
             if pane.id is None or pane.id in self._pinned:
                 continue
             self._sql_by_pane.pop(pane.id, None)
+            self._elapsed_by_pane.pop(pane.id, None)
             self._names.pop(pane.id, None)
             self.remove_pane(pane.id)
         if not self._pinned:
@@ -238,7 +247,43 @@ class ResultsViewer(TabbedContent, can_focus=True):
             except NoMatches:
                 return None
 
-    async def push_table(self, table_id: str, result: ResultSet) -> ResultsTable:
+    # --- what is here, for something outside the viewer to hand on ----------
+    # A configured command (`[commands.x]` with `stdin = "results"`) serializes a
+    # result and gives it to another program, which means something outside this
+    # widget has to be able to ask what is in it: which tab is visible, which are
+    # pinned, and for any of them the grid, the SQL that made it and how long that
+    # took. Accessors rather than public attributes, so the bookkeeping above stays
+    # this widget's own.
+
+    def visible_pane_id(self) -> str | None:
+        """The tab the user is looking at, or None when the viewer is empty."""
+        return self.active or None
+
+    def pinned_pane_ids(self) -> list[str]:
+        """Every pinned tab, in tab order -- the order they are on screen, which is
+        the order a user reading them would expect them handed over in."""
+        order = [pane.id for pane in self.query(TabPane) if pane.id is not None]
+        return [pane_id for pane_id in order if pane_id in self._pinned]
+
+    def table_for(self, pane_id: str) -> ResultsTable | None:
+        try:
+            return self.query_one(f"#{pane_id}", TabPane).query_one(ResultsTable)
+        except NoMatches:
+            return None
+
+    def sql_for(self, pane_id: str) -> str:
+        return self._sql_by_pane.get(pane_id, "")
+
+    def label_for(self, pane_id: str) -> str | None:
+        """The name the user gave the tab, or None for a `Result n` nobody renamed."""
+        return self._names.get(pane_id)
+
+    def elapsed_for(self, pane_id: str) -> float | None:
+        return self._elapsed_by_pane.get(pane_id)
+
+    async def push_table(
+        self, table_id: str, result: ResultSet, elapsed: float | None = None
+    ) -> ResultsTable:
         formatted_labels = [
             self._format_column_label(col_name, col_type)
             for col_name, col_type in result.columns
@@ -262,6 +307,8 @@ class ResultsViewer(TabbedContent, can_focus=True):
         n = self._next_tab_number
         pane_id = f"result-{n}"
         self._sql_by_pane[pane_id] = result.statement.sql
+        if elapsed is not None:
+            self._elapsed_by_pane[pane_id] = elapsed
         pane = TabPane(f"Result {n}", table, id=pane_id)
         await self.add_pane(pane)
         self._relabel_tab(pane_id)
@@ -326,6 +373,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
             return
         self._pinned.discard(pane_id)
         self._sql_by_pane.pop(pane_id, None)
+        self._elapsed_by_pane.pop(pane_id, None)
         self._names.pop(pane_id, None)
         self.remove_pane(pane_id)
         # `remove_pane` is queued, so `tab_count` is still the old one here;

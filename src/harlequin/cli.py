@@ -19,6 +19,7 @@ from harlequin.config import (
     DEFAULT_ADAPTER,
     DEFAULT_SSH_TIMEOUT,
     Profile,
+    load_commands,
     load_profile_and_keymaps,
     merge_profile_with_cli,
     parse_profile_options,
@@ -596,6 +597,17 @@ def build_cli(argv: Sequence[str]) -> click.Command:
             pretty_print_error(e)
             ctx.exit(2)
 
+        # Commands are read separately from everything else, because they are the one
+        # kind of config value whose *source file* decides whether it is obeyed: a
+        # program to execute is honoured from a file the user owns and ignored from one
+        # a repository shipped. `ignored_command_files` is what the app tells them
+        # about; silence there would look like a config that does not work.
+        try:
+            commands, ignored_command_files = load_commands(config_path)
+        except HarlequinConfigError as e:
+            pretty_print_error(e)
+            ctx.exit(2)
+
         explicitly_set = {
             k
             for k in kwargs
@@ -746,6 +758,8 @@ def build_cli(argv: Sequence[str]) -> click.Command:
                 catalog_exclude=catalog_exclude,
                 export_path=export_path,
                 ssh_tunnel=tunnel,
+                commands=commands,
+                adapter_name=adapter_name,
             )
             tui.run()
 

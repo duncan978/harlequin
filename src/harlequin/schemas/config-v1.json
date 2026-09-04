@@ -35,6 +35,14 @@
       },
       "default": {},
       "description": "Named key bindings for the harlequin IDE, one array of bindings each."
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/CommandConfig"
+      },
+      "default": {},
+      "description": "Programs the harlequin IDE can run with the editor or the results as input, one table each. Honoured only from a config file in your home or config directory, or one named with --config-path; hsql runs none of them."
     }
   },
   "required": [],
@@ -343,6 +351,78 @@
         "keys"
       ],
       "description": "One key binding: the keys, the action they run, and how to show them.",
+      "additionalProperties": false
+    },
+    "CommandConfig": {
+      "title": "Command",
+      "description": "A program the IDE runs with the editor or the results as input: `command` is argv (or a string), `stdin` says what it is given, `output` what is done with what it writes back.",
+      "type": "object",
+      "properties": {
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stdin": {
+          "enum": [
+            "buffer",
+            "none",
+            "pinned_results",
+            "results",
+            "section",
+            "selection",
+            "statement"
+          ],
+          "default": "none"
+        },
+        "output": {
+          "enum": [
+            "insert",
+            "new-buffer",
+            "none",
+            "notify",
+            "replace"
+          ],
+          "default": "none"
+        },
+        "timeout": {
+          "type": "number",
+          "default": 120.0
+        },
+        "max_rows": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "command"
+      ],
       "additionalProperties": false
     }
   }
