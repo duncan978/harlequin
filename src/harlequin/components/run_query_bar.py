@@ -44,13 +44,20 @@ class RunQueryBar(Horizontal):
         """
 
         self.show_cancel_button = show_cancel_button
+        self.narrow = False
+        """Compact labels, for a terminal under the app's `catalog_min_width`."""
+        self.runs_selection = False
+        """Whether the run button would run the editor's selection, not the buffer."""
         super().__init__(
             *children, name=name, id=id, classes=classes, disabled=disabled
         )
 
     def compose(self) -> ComposeResult:
+        # narrow mode only: the mouse's way to the Data Catalog overlay
+        self.catalog_button = Button("▤ Catalog", id="catalog_button", classes="hidden")
+        self.catalog_button.tooltip = "Show or hide the Data Catalog (f9)"
         self.profile_label = Static(
-            f"profile: {self.profile_name}" if self.profile_name else "",
+            self._profile_text(),
             id="profile_label",
             classes=None if self.profile_is_default else "non-default",
         )
@@ -76,6 +83,7 @@ class RunQueryBar(Horizontal):
         self.run_button = Button("Run Query", id="run_query")
         self.cancel_button = Button("Cancel Query", id="cancel_query")
         self.cancel_button.add_class("hidden")
+        yield self.catalog_button
         yield self.profile_label
         with Horizontal(id="transaction_buttons"):
             yield self.transaction_button
@@ -90,6 +98,30 @@ class RunQueryBar(Horizontal):
     def on_mount(self) -> None:
         if self.app.is_headless:
             self.limit_input.cursor_blink = False
+
+    def _profile_text(self) -> str:
+        if not self.profile_name:
+            return ""
+        # the coloured badge already says "profile"; the word is the first to go
+        return self.profile_name if self.narrow else f"profile: {self.profile_name}"
+
+    def _run_text(self) -> str:
+        if self.narrow:
+            return "Run Sel." if self.runs_selection else "Run"
+        return "Run Selection" if self.runs_selection else "Run Query"
+
+    def set_runs_selection(self, runs_selection: bool) -> None:
+        """Label the run button for a selection or the whole buffer."""
+        self.runs_selection = runs_selection
+        self.run_button.label = self._run_text()
+
+    def set_narrow(self, narrow: bool) -> None:
+        """Shorten the bar for a narrow terminal, and show the Catalog button."""
+        self.narrow = narrow
+        self.set_class(narrow, "narrow")
+        self.catalog_button.set_class(not narrow, "hidden")
+        self.profile_label.update(self._profile_text())
+        self.run_button.label = self._run_text()
 
     def apply_configured_limit(self) -> None:
         """Put the box in the state `--limit` asked for.

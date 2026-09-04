@@ -18,7 +18,7 @@ from typing import (
     Union,
 )
 
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import DOMQuery
@@ -232,6 +232,14 @@ class Harlequin(AppBase):
 
     full_screen: reactive[bool] = reactive(False)
     sidebar_hidden: reactive[bool] = reactive(False)
+    narrow: reactive[bool] = reactive(False)
+    """The terminal is under `catalog_min_width` columns wide.
+
+    In narrow mode the Data Catalog is an overlay over the main panel rather than
+    a column beside it, and the Run Query Bar shortens its labels.
+    """
+    catalog_overlay: reactive[bool] = reactive(False)
+    """Whether the Data Catalog overlay is showing (narrow mode only)."""
 
     def __init__(
         self,
@@ -245,6 +253,7 @@ class Harlequin(AppBase):
         show_files: Path | None = None,
         show_s3: str | None = None,
         catalog_side: str = "left",
+        catalog_min_width: int | str | None = None,
         export_path: Path | str | None = None,
         viewer_max_rows: int | str | None = 100_000,
         query_limit: int | str | None = None,
@@ -275,6 +284,22 @@ class Harlequin(AppBase):
         # "right" is left, so a typo in the config file costs the default
         # layout rather than the app.
         self.catalog_side = "right" if str(catalog_side).lower() == "right" else "left"
+        # under this many columns the catalog is an overlay (see `narrow`). 0 or
+        # None keeps the column at every width, which is also what tests and other
+        # library callers get by default; the CLI supplies its own default.
+        try:
+            self.catalog_min_width = int(catalog_min_width or 0)
+        except (TypeError, ValueError):
+            self.catalog_min_width = 0
+            self.exit(
+                return_code=2,
+                message=pretty_error_message(
+                    HarlequinConfigError(
+                        f"catalog_min_width={catalog_min_width!r} was set by config "
+                        "file but is not a valid integer."
+                    )
+                ),
+            )
         # already started, by the command that built this app: `ssh` prompts for
         # a passphrase on the terminal Textual is about to take.
         self.ssh_tunnel = ssh_tunnel
@@ -429,6 +454,9 @@ class Harlequin(AppBase):
             and self.editor._has_focus_within
         ):
             self.editor.restart_blink()
+        # a modal opened from the catalog drawer kept it open; if focus came back
+        # somewhere else, the drawer has no blur left to close it
+        self.call_after_refresh(self._close_overlay_if_unfocused)
         return new_screen
 
     def append_to_history(
@@ -442,6 +470,8 @@ class Harlequin(AppBase):
 
     async def on_mount(self) -> None:
         self.run_query_bar.apply_configured_limit()
+        self._check_narrow(self.size.width)
+        self.watch_narrow(self.narrow)  # a resize before compose was skipped
 
         if self.ssh_tunnel is not None:
             # which database this session is actually looking at
@@ -913,6 +943,8 @@ class Harlequin(AppBase):
                     or target in other_widgets
                     or not isinstance(target, Widget)
                 ):
+                    # nothing to full-screen (focus is in the catalog, say)
+                    self.full_screen = False
                     return
                 else:
                     target = target.parent
@@ -920,11 +952,12 @@ class Harlequin(AppBase):
                 w.disabled = w != target
             if target == self.editor_collection:
                 self.run_query_bar.disabled = False
+            self.catalog_overlay = False
             self.data_catalog.disabled = True
         else:
             for w in all_widgets:
                 w.disabled = False
-            self.data_catalog.disabled = self.sidebar_hidden
+            self._apply_catalog_visibility()
 
     @on(QuerySubmitted)
     def execute_query(self, message: QuerySubmitted) -> None:
@@ -940,7 +973,82 @@ class Harlequin(AppBase):
         if sidebar_hidden:
             if self.data_catalog.has_focus and self.editor is not None:
                 self.editor.focus()
-        self.data_catalog.disabled = sidebar_hidden
+        if not self.narrow:
+            self.data_catalog.disabled = sidebar_hidden
+
+    # -- narrow mode -------------------------------------------------------
+    # A half-screen tmux pane is ~94 columns; a catalog column there leaves the
+    # editor too narrow for real SQL. Under `catalog_min_width` the catalog
+    # starts hidden and f9 / ctrl+b / the Run Query Bar's Catalog button open it
+    # as a drawer over the right of the main panel, dismissed by escape, f9
+    # again, or focus leaving it (a click in the editor, or inserting a name).
+    # `sidebar_hidden` is left alone in narrow mode, so widening the terminal
+    # again restores whatever column state it had.
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._check_narrow(event.size.width)
+
+    def _check_narrow(self, width: int) -> None:
+        self.narrow = 0 < self.catalog_min_width and width < self.catalog_min_width
+
+    def watch_narrow(self, narrow: bool) -> None:
+        if not hasattr(self, "run_query_bar"):
+            return  # before compose; on_mount re-applies
+        self.catalog_overlay = False
+        self.data_catalog.set_class(narrow, "overlay")
+        self.data_catalog.set_class(self.catalog_side == "left", "dock-left")
+        self.run_query_bar.set_narrow(narrow)
+        self._apply_catalog_visibility()
+
+    def watch_catalog_overlay(self, showing: bool) -> None:
+        if not hasattr(self, "run_query_bar") or not self.narrow:
+            return
+        # disabling the catalog blurs it, so note where focus was first
+        had_focus = self.data_catalog.has_focus or self.data_catalog.has_focus_within
+        self.data_catalog.disabled = not showing
+        if showing:
+            self.data_catalog.focus()
+        elif had_focus and self.editor is not None:
+            self.editor.focus()
+
+    def _apply_catalog_visibility(self) -> None:
+        """Set the catalog's `disabled` from the mode and the state that mode keeps."""
+        if self.full_screen:
+            return
+        if self.narrow:
+            self.data_catalog.disabled = not self.catalog_overlay
+        else:
+            self.data_catalog.disabled = self.sidebar_hidden
+
+    @on(events.DescendantBlur)
+    def _close_overlay_when_left(self, event: events.DescendantBlur) -> None:
+        if self.narrow and self.catalog_overlay:
+            # settle first: focus may be moving within the catalog (tree to filter)
+            self.call_after_refresh(self._close_overlay_if_unfocused)
+
+    def _close_overlay_if_unfocused(self) -> None:
+        if (
+            self.narrow
+            and self.catalog_overlay
+            and self.app_focus  # another tmux pane took focus: keep the drawer
+            and len(self.screen_stack) == 1
+            and not self.data_catalog.has_focus_within
+            and not self.data_catalog.has_focus
+            # the Catalog button is about to toggle; it is the only writer then
+            and self.focused is not self.run_query_bar.catalog_button
+        ):
+            self.catalog_overlay = False
+
+    @on(DataCatalog.Dismiss)
+    def _close_overlay_on_escape(self, message: DataCatalog.Dismiss) -> None:
+        message.stop()
+        if self.narrow and self.catalog_overlay:
+            self.catalog_overlay = False
+
+    @on(Button.Pressed, "#catalog_button")
+    def _toggle_catalog_from_button(self, message: Button.Pressed) -> None:
+        message.stop()
+        self.action_toggle_sidebar()
 
     def _post_tunnel_closed(self, notice: str) -> None:
         """Called on the tunnel's watcher thread, so it only posts a message.
@@ -1253,7 +1361,9 @@ class Harlequin(AppBase):
         The sidebar can be hidden with either ctrl+b or f10, and we need
         to persist the state depending on how that happens
         """
-        if self.sidebar_hidden is False and self.data_catalog.disabled is True:
+        if self.narrow:
+            self.catalog_overlay = not self.catalog_overlay
+        elif self.sidebar_hidden is False and self.data_catalog.disabled is True:
             # sidebar was hidden by f10; toggle should show it
             self.data_catalog.disabled = False
         else:
@@ -1269,6 +1379,8 @@ class Harlequin(AppBase):
         else:
             panes.move_child(self.data_catalog, before=main_panel)
             self.catalog_side = "left"
+        # the narrow-mode drawer docks by class, not by DOM order
+        self.data_catalog.set_class(self.catalog_side == "left", "dock-left")
         self.notify(
             f"Data Catalog moved to the {self.catalog_side}. "
             f'Set `catalog_side = "{self.catalog_side}"` in your config to keep it.'
@@ -1281,10 +1393,7 @@ class Harlequin(AppBase):
         self.data_catalog.update_s3_tree()
 
     def _sync_run_button_text(self) -> None:
-        if self._validate_selection():
-            self.run_query_bar.run_button.label = "Run Selection"
-        else:
-            self.run_query_bar.run_button.label = "Run Query"
+        self.run_query_bar.set_runs_selection(bool(self._validate_selection()))
 
     def _sync_run_button_disabled(self) -> None:
         if self.editor is None or self.editor.text_input is None:

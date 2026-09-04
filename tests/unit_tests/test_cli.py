@@ -140,6 +140,7 @@ def test_default(
         show_files=None,
         show_s3=None,
         catalog_side="left",
+        catalog_min_width=120,
         export_path=None,
         ssh_tunnel=None,
     )

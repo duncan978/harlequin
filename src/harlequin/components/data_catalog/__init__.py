@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, ClassVar, Sequence
 
 from rich.markup import escape
 from textual import on
+from textual.binding import Binding
 from textual.content import ContentType
 from textual.css.query import InvalidQueryFormat, NoMatches
 from textual.message import Message
@@ -106,6 +107,10 @@ class ContextMenu(OptionList):
 
 class DataCatalog(TabbedContent, can_focus=True):
     BORDER_TITLE = "Data Catalog"
+    BINDINGS = [Binding("escape", "dismiss", "Close", show=False)]
+
+    class Dismiss(Message):
+        """Escape was pressed in the catalog: when it is an overlay, close it."""
 
     def __init__(
         self,
@@ -228,6 +233,12 @@ class DataCatalog(TabbedContent, can_focus=True):
             new_tab_number = unsafe_tab_number
         self.active = f"tab-{new_tab_number}"
         self.focus()
+
+    def action_dismiss(self) -> None:
+        if self.database_context_menu.has_class("open"):
+            self.database_context_menu.action_hide()
+            return
+        self.post_message(self.Dismiss())
 
     def action_focus_results_viewer(self) -> None:
         if hasattr(self.app, "action_focus_results_viewer"):

@@ -796,3 +796,56 @@ RenameModal Label#hint_label {
 RenameModal Input {
     width: 100%;
 }
+
+/* NARROW MODE (fork). Under catalog_min_width the Data Catalog is a drawer over
+   the main panel instead of a column beside it: its own layer (dock alone would
+   reserve space), full pane height above the footer, solid background so the
+   editor doesn't bleed through. Kept together, at the end, to stay clear of
+   upstream's blocks when rebasing. */
+#panes {
+    layers: main overlay;
+}
+
+DataCatalog.overlay {
+    layer: overlay;
+    dock: right;
+    width: 32;
+    height: 100%;
+    background: $background;
+}
+
+DataCatalog.overlay.dock-left {
+    dock: left;
+}
+
+DataCatalog.overlay:disabled {
+    width: 0;
+    height: 0;
+    padding: 0 0;
+    border: none;
+}
+
+/* the mouse's way to the drawer; only shown in narrow mode */
+RunQueryBar Button#catalog_button {
+    background: $background;
+    color: $text-muted;
+    text-style: none;
+    width: auto;
+    min-width: 11;
+    margin: 0 1 0 0;
+    &:hover {
+        color: $secondary;
+    }
+    &.hidden {
+        display: none;
+    }
+}
+
+/* compact labels: "Run" and "Tx: Auto" sized to fit */
+RunQueryBar.narrow Button#run_query {
+    min-width: 5;
+}
+
+RunQueryBar.narrow Button#transaction_button {
+    min-width: 10;
+}

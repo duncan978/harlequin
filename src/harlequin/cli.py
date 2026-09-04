@@ -46,6 +46,14 @@ if TYPE_CHECKING:
 
 # configure defaults
 DEFAULT_VIEWER_MAX_ROWS = 100_000
+DEFAULT_CATALOG_MIN_WIDTH = 120
+"""Below this many columns the Data Catalog is an overlay rather than a column.
+
+Half of a 13" laptop screen is about 94 columns; a catalog column there leaves
+the editor too narrow for real SQL. 120 keeps the column on anything wider than
+that (the 13" full-screen, any external monitor) and switches to the overlay on
+anything narrower.
+"""
 DEFAULT_THEME = "harlequin"
 ALL_THEMES = ", ".join(VALID_THEMES.keys())
 DEFAULT_KEYMAP_NAMES = ["vscode"]
@@ -515,6 +523,15 @@ def build_cli(argv: Sequence[str]) -> click.Command:
         ),
     )
     @click.option(
+        "--catalog-min-width",
+        type=click.IntRange(min=0),
+        help=(
+            "Below this many terminal columns the Data Catalog starts hidden and "
+            "f9 opens it as an overlay over the editor instead of a side column. "
+            f"0 always shows the column. Default is {DEFAULT_CATALOG_MIN_WIDTH}"
+        ),
+    )
+    @click.option(
         "--config",
         help=(
             "Run the configuration wizard to create or update a Harlequin config file."
@@ -644,6 +661,9 @@ def build_cli(argv: Sequence[str]) -> click.Command:
                 ctx.exit(2)
         show_s3: str | None = config.pop("show_s3", None)
         catalog_side: str = config.pop("catalog_side", None) or "left"
+        catalog_min_width = config.pop("catalog_min_width", None)
+        if catalog_min_width is None:
+            catalog_min_width = DEFAULT_CATALOG_MIN_WIDTH
         export_path: Path | str | None = config.pop("output", None)
         read_only: bool = bool(config.pop("read_only", False))
         if read_only and not adapter_cls.IMPLEMENTS_READ_ONLY:
@@ -710,6 +730,7 @@ def build_cli(argv: Sequence[str]) -> click.Command:
                 show_files=show_files,
                 show_s3=show_s3,
                 catalog_side=catalog_side,
+                catalog_min_width=catalog_min_width,
                 export_path=export_path,
                 ssh_tunnel=tunnel,
             )
