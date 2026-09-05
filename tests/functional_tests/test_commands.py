@@ -583,3 +583,79 @@ async def test_a_fallback_that_repeats_the_first_source_is_not_tried_twice(
         await pilot.pause()
         warnings = [n for n in app._notifications if "Nothing is selected" in n.message]
         assert len(warnings) == 1, warnings
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_app",
+    [
+        {
+            "send": command(
+                SAY_ENV,
+                stdin="selection",
+                fallback_stdin=["results", "statement"],
+                output="replace",
+            )
+        }
+    ],
+    indirect=True,
+)
+async def test_a_selection_older_than_the_result_yields_to_it(
+    command_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """`ctrl+d` runs a section by selecting it, so the selection is always there and is
+    always older than the rows. Sending after a run has to mean the rows."""
+    app = command_app
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        app.editor.text = "select 1 as a;"
+        app.editor.text_input.selection = Selection((0, 0), (0, 13))
+        await pilot.pause()
+
+        # run it, which lands a result after the selection was made
+        await app.editor.action_submit()
+        await wait_for_workers(app)
+        await pilot.pause()
+        assert app.results_viewer.newest_arrival() is not None
+
+        await _run(app, pilot)
+        assert app.editor.text.split("|")[1] == "results", (
+            "the rows are what the user is looking at"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_app",
+    [
+        {
+            "send": command(
+                SAY_ENV,
+                stdin="selection",
+                fallback_stdin=["results", "statement"],
+                output="replace",
+            )
+        }
+    ],
+    indirect=True,
+)
+async def test_a_selection_made_after_the_result_still_wins(
+    command_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """The case the ordering exists for: highlight something and it is what you meant,
+    whatever ran earlier."""
+    app = command_app
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        app.editor.text = "select 1 as a;\nselect 2 as b;\n"
+        await app.editor.action_submit()
+        await wait_for_workers(app)
+        await pilot.pause()
+
+        # now highlight something, which is newer than the rows
+        app.editor.text_input.selection = Selection((1, 0), (1, 13))
+        await pilot.pause()
+        await _run(app, pilot)
+        assert app.editor.text.split("|")[1] == "selection"

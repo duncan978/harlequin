@@ -31,7 +31,7 @@ from textual.screen import Screen, ScreenResultCallbackType, ScreenResultType
 from textual.timer import Timer
 from textual.types import CSSPathType
 from textual.widget import AwaitMount, Widget
-from textual.widgets import Button, Footer, Input
+from textual.widgets import Button, Footer, Input, TextArea
 from textual.worker import Worker, WorkerState
 from textual_fastdatatable import DataTable
 from textual_fastdatatable.backend import ArrowBackend
@@ -276,6 +276,9 @@ class Harlequin(AppBase):
     """
     The SQL IDE for your Terminal.
     """
+
+    _selection_made_at: float | None = None
+    """When the user last highlighted something, on the monotonic clock."""
 
     CSS_PATH = ["global.tcss", "app.tcss"]
 
@@ -1804,6 +1807,48 @@ class Harlequin(AppBase):
             confirmed,
         )
 
+    @on(TextArea.SelectionChanged)
+    def note_selection_time(self, message: TextArea.SelectionChanged) -> None:
+        """Remember when the user last highlighted something.
+
+        Only a real selection counts. Moving the cursor changes the selection too, and
+        an empty one is not the user saying "this bit".
+        """
+        selection = message.selection
+        if selection.start != selection.end:
+            self._selection_made_at = time.monotonic()
+
+    def _freshest_first(self, sources: list[str]) -> list[str]:
+        """Put the result ahead of the selection when the result is the newer of the
+        two.
+
+        A chain is a statement of preference, and preference is not the whole story: a
+        selection that predates the result on screen is stale, and a stale source
+        should yield to a fresher one further down the chain.
+
+        This exists because of `run_section`, which runs a section *by selecting it*.
+        Without it, running a section and then sending would hand over the SQL that had
+        just run rather than the rows it produced -- the one thing the user cannot have
+        meant, since the rows are what they are looking at. Selecting something after a
+        query has run still wins, which is the case the ordering is there for.
+        """
+        if "selection" not in sources:
+            return sources
+        results = next((s for s in sources if s in ("results", "pinned_results")), None)
+        if results is None or sources.index(results) < sources.index("selection"):
+            return sources
+        viewer = getattr(self, "results_viewer", None)
+        arrived = viewer.newest_arrival() if viewer is not None else None
+        if arrived is None:
+            return sources
+        selected = self._selection_made_at
+        if selected is not None and selected >= arrived:
+            return sources
+        reordered = list(sources)
+        reordered.remove(results)
+        reordered.insert(reordered.index("selection"), results)
+        return reordered
+
     def _gather_invocation(
         self, name: str, command: CommandConfig
     ) -> CommandInvocation | None:
@@ -1827,6 +1872,7 @@ class Harlequin(AppBase):
         for extra in fallbacks:
             if extra not in sources:
                 sources.append(extra)
+        sources = self._freshest_first(sources)
         source = sources[-1]
         for attempt, candidate in enumerate(sources):
             last = attempt == len(sources) - 1

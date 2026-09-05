@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from rich.style import Style
@@ -185,6 +186,9 @@ class ResultsViewer(TabbedContent, can_focus=True):
         self._pinned: set[str] = set()
         self._sql_by_pane: dict[str, str] = {}
         self._elapsed_by_pane: dict[str, float] = {}
+        self._arrived_by_pane: dict[str, float] = {}
+        """When each result landed, on the monotonic clock. A command that has to choose
+        between a result and something else needs to know which of them is newer."""
         """How long each result took to fetch, as its run reported it.
 
         Recorded here rather than asked of the table, because it is a fact about the
@@ -206,6 +210,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
         self._pinned.clear()
         self._sql_by_pane.clear()
         self._elapsed_by_pane.clear()
+        self._arrived_by_pane.clear()
         self._names.clear()
         self._next_tab_number = 0
         self.add_class("hide-tabs")
@@ -222,6 +227,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
                 continue
             self._sql_by_pane.pop(pane.id, None)
             self._elapsed_by_pane.pop(pane.id, None)
+            self._arrived_by_pane.pop(pane.id, None)
             self._names.pop(pane.id, None)
             self.remove_pane(pane.id)
         if not self._pinned:
@@ -281,6 +287,14 @@ class ResultsViewer(TabbedContent, can_focus=True):
     def elapsed_for(self, pane_id: str) -> float | None:
         return self._elapsed_by_pane.get(pane_id)
 
+    def arrived_at(self, pane_id: str) -> float | None:
+        """When this result landed, on the monotonic clock."""
+        return self._arrived_by_pane.get(pane_id)
+
+    def newest_arrival(self) -> float | None:
+        """When the most recent result landed, of all the tabs there are."""
+        return max(self._arrived_by_pane.values(), default=None)
+
     async def push_table(
         self, table_id: str, result: ResultSet, elapsed: float | None = None
     ) -> ResultsTable:
@@ -307,6 +321,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
         n = self._next_tab_number
         pane_id = f"result-{n}"
         self._sql_by_pane[pane_id] = result.statement.sql
+        self._arrived_by_pane[pane_id] = monotonic()
         if elapsed is not None:
             self._elapsed_by_pane[pane_id] = elapsed
         pane = TabPane(f"Result {n}", table, id=pane_id)
