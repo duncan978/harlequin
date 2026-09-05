@@ -243,6 +243,19 @@ keymap binds it by that name, so a name with a dot or a space in it could not be
 bound."""
 
 
+StdinSource = Literal[
+    "none",
+    "selection",
+    "statement",
+    "section",
+    "buffer",
+    "results",
+    "pinned_results",
+]
+"""What a command can ask to be handed. Mirrors `commands.STDIN_SOURCES`, which is the
+runtime copy; this one is what validates a config file."""
+
+
 class CommandConfig(msgspec.Struct, forbid_unknown_fields=True):
     """One `[commands.<name>]` table: a program to run, and what it is given.
 
@@ -259,37 +272,28 @@ class CommandConfig(msgspec.Struct, forbid_unknown_fields=True):
 
     command: Union[str, List[str]]
     description: Optional[str] = None
-    stdin: Literal[
-        "none",
-        "selection",
-        "statement",
-        "section",
-        "buffer",
-        "results",
-        "pinned_results",
-    ] = "none"
+    stdin: StdinSource = "none"
     output: Literal["none", "notify", "replace", "insert", "new-buffer"] = "none"
     timeout: float = 120.0
     max_rows: Optional[int] = None
     """A cap on the rows handed over, for the two result sources only."""
-    fallback_stdin: Optional[
-        Literal[
-            "none",
-            "selection",
-            "statement",
-            "section",
-            "buffer",
-            "results",
-            "pinned_results",
-        ]
+    fallback_stdin: Union[
+        None,
+        StdinSource,
+        List[StdinSource],
     ] = None
-    """What to send when `stdin` has nothing to give.
+    """What to send when `stdin` has nothing to give: one source, or several in order.
 
     A command that sends the visible result is the one a user reaches for, and before
     the first run of the day there is no visible result -- which used to be a warning
-    and nothing sent. `fallback_stdin = "statement"` makes that command send the query
-    instead, so one key is right whether or not anything has run. The child is told
-    which it got: `HARLEQUIN_STDIN` names the source that actually produced the bytes.
+    and nothing sent. A fallback makes one key right whether or not anything has run.
+
+    A *list* is tried left to right, which is how one key can mean "whichever of these
+    the user most plainly meant": a selection if there is one, else the result on
+    screen, else the statement under the cursor. Each is tried in turn and the first
+    with something to give wins. The child is told which it got -- `HARLEQUIN_STDIN`
+    names the source that actually produced the bytes, never the one that was asked
+    for first.
     """
     order: Optional[int] = None
     """Where the command sits in the menu; lower first, ties alphabetical by label.

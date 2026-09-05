@@ -425,6 +425,9 @@
         "fallback_stdin": {
           "anyOf": [
             {
+              "type": "null"
+            },
+            {
               "enum": [
                 "buffer",
                 "none",
@@ -436,7 +439,18 @@
               ]
             },
             {
-              "type": "null"
+              "type": "array",
+              "items": {
+                "enum": [
+                  "buffer",
+                  "none",
+                  "pinned_results",
+                  "results",
+                  "section",
+                  "selection",
+                  "statement"
+                ]
+              }
             }
           ],
           "default": null

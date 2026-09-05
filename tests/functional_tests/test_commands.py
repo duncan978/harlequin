@@ -525,3 +525,61 @@ async def test_the_menu_leads_with_the_ordered_commands_and_rules_between_groups
         await pilot.press("down")
         await pilot.pause()
         assert command_list.option_list.highlighted == 2, "a rule is passed over"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_app",
+    [
+        {
+            "send": command(
+                SAY_ENV,
+                stdin="selection",
+                fallback_stdin=["results", "statement"],
+                output="replace",
+            )
+        }
+    ],
+    indirect=True,
+)
+async def test_a_chain_of_fallbacks_is_tried_in_order(
+    command_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """One key, three meanings, in the order a user would expect: what you highlighted,
+    else what is on screen, else where the cursor is."""
+    app = command_app
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+
+        # nothing selected and nothing run: the last link in the chain
+        app.editor.text = "select 1;"
+        await _run(app, pilot)
+        assert app.editor.text.split("|")[1] == "statement"
+
+        # a selection beats everything after it
+        app.editor.text = "select 1;\nselect 2;\n"
+        app.editor.text_input.selection = Selection((0, 0), (0, 8))
+        await _run(app, pilot)
+        assert app.editor.text.split("|")[1] == "selection"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_app",
+    [{"send": command(ECHO_STDIN, stdin="selection", fallback_stdin=["selection"])}],
+    indirect=True,
+)
+async def test_a_fallback_that_repeats_the_first_source_is_not_tried_twice(
+    command_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """Otherwise the same empty source warns once per mention."""
+    app = command_app
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        app.editor.text = "select 1;"
+        await pilot.press("alt+s")
+        await pilot.pause()
+        warnings = [n for n in app._notifications if "Nothing is selected" in n.message]
+        assert len(warnings) == 1, warnings

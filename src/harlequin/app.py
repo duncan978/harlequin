@@ -1815,12 +1815,18 @@ class Harlequin(AppBase):
         tmpdir: str | None = None
         files: list[str] = []
 
-        # A command may name a second source for when the first has nothing. The
-        # earlier attempts stay quiet, so a command that recovers does not warn about
-        # what it recovered from; only the last one tried says why it failed.
+        # A command may name further sources for when the first has nothing, tried in
+        # order: one key can mean "a selection if there is one, else the result on
+        # screen, else the statement under the cursor". The earlier attempts stay
+        # quiet, so a command that recovers does not warn about what it recovered from;
+        # only the last one tried says why it failed.
+        fallbacks = command.fallback_stdin or []
+        if isinstance(fallbacks, str):
+            fallbacks = [fallbacks]
         sources = [command.stdin]
-        if command.fallback_stdin and command.fallback_stdin != command.stdin:
-            sources.append(command.fallback_stdin)
+        for extra in fallbacks:
+            if extra not in sources:
+                sources.append(extra)
         source = sources[-1]
         for attempt, candidate in enumerate(sources):
             last = attempt == len(sources) - 1
