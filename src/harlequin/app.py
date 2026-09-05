@@ -1686,8 +1686,8 @@ class Harlequin(AppBase):
         action = self.actions.get(action_name)
         if action is None:
             self.notify(
-                f"Keymap {keymap_name!r} binds {action_name!r}, which is not an action "
-                "Harlequin knows. That binding is not in force.",
+                f"Keymap {keymap_name!r} binds unknown action {action_name!r}. That "
+                "binding is off.",
                 severity="warning",
                 timeout=10,
             )
@@ -1720,8 +1720,8 @@ class Harlequin(AppBase):
         """
         if not self.commands:
             self.notify(
-                "No commands are configured. Add a [commands.<name>] table to your "
-                "config file to run a program with the editor or the results as input.",
+                "No commands configured. Add a [commands.<name>] table to your config "
+                "file.",
                 severity="warning",
                 timeout=10,
             )
@@ -1974,8 +1974,7 @@ class Harlequin(AppBase):
             section = self.editor_collection.section_under_cursor()
             if section is None:
                 warn(
-                    "The cursor is not in a section. Start a line with `-- ## Name` "
-                    "to make one."
+                    "The cursor is not in a section. Start a line with `-- ## Name`."
                 )
                 return None
             text, _name = section

@@ -176,7 +176,7 @@ async def test_focus_section_will_not_nest(
         collection.action_focus_section()
         await pilot.pause()
         assert collection.tab_count == tabs_before
-        assert "already one section" in list(app._notifications)[-1].message
+        assert "Already one section" in list(app._notifications)[-1].message
 
 
 @pytest.mark.asyncio
@@ -239,7 +239,7 @@ async def test_a_section_whose_heading_is_gone_is_not_guessed_at(
         await pilot.pause()
         # untouched, and said so
         assert app.editor.text == "-- ## Nothing like it\nselect 1;\n"
-        assert "no longer in the tab it came from" in list(app._notifications)[-1].message
+        assert "is gone from its tab" in list(app._notifications)[-1].message
 
 
 @pytest.mark.asyncio
@@ -350,7 +350,7 @@ async def test_a_section_edited_in_both_tabs_keeps_what_the_tab_has(
         app.editor.text = "-- ## First\nselect 'from the tab';\n"
         collection.tabs.active = parent_id
         await pilot.pause()
-        assert "no longer in the tab it came from" in list(app._notifications)[-1].message
+        assert "is gone from its tab" in list(app._notifications)[-1].message
         assert "from the tab" not in app.editor.text
 
         # the script grows a `First` again, with different SQL under it

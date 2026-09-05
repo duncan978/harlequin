@@ -768,7 +768,7 @@ class EditorCollection(Vertical):
 
     def _no_sections_notice(self) -> None:
         self.app.notify(
-            "No sections in this buffer. Start a line with `-- ## Name` to make one.",
+            "No sections here. Start a line with `-- ## Name`.",
             severity="warning",
         )
 
@@ -883,8 +883,7 @@ class EditorCollection(Vertical):
             return
         if parent_id in self.section_views:
             self.app.notify(
-                "This tab is already one section. Close it to go back to the "
-                "whole script.",
+                "Already one section. Close it for the whole script.",
                 severity="warning",
             )
             return
@@ -1011,8 +1010,7 @@ class EditorCollection(Vertical):
             return
         if parent is None:
             self.app.notify(
-                f"The tab '{view.name}' came from was closed, so it was not "
-                "written back.",
+                f"'{view.name}' was not written back: its tab is closed.",
                 severity="warning",
             )
             self.section_views.pop(buffer_id, None)
@@ -1030,8 +1028,7 @@ class EditorCollection(Vertical):
                     break
         if span is None:
             self.app.notify(
-                f"'{view.name}' is no longer in the tab it came from, so the "
-                "changes were not written back. They are still in this tab.",
+                f"'{view.name}' is gone from its tab. Changes kept in this one.",
                 severity="warning",
                 timeout=10,
             )
