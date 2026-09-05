@@ -14,6 +14,7 @@ class RawKeyBinding(TypedDict):
     keys: str
     action: str
     key_display: NotRequired[str]
+    show: NotRequired[bool]
 
 
 class RawKeyMap(TypedDict):
@@ -29,19 +30,25 @@ class HarlequinKeyBinding:
     """The name of an action. Must be a key of harlequin.actions.HARLEQUIN_ACTIONS"""
     key_display: str | None = None
     """If specified, overrides the key display in Harlequin footer for this binding."""
+    show: bool | None = None
+    """Whether the footer lists this key. `None` leaves it to the action, which is what
+    every binding did before this field existed.
+
+    A footer with thirty keys in it is a footer nobody reads, and the keys worth listing
+    are not the same as the keys worth binding: a keymap that adds ten commands wants
+    one or two of them on screen and the rest reachable. `show = false` is how a binding
+    exists without spending a footer slot -- including a binding that sets
+    `key_display`, which used to force itself into the footer whatever the action said.
+    """
 
     def to_dict(self) -> RawKeyBinding:
         """
         Returns a dictionary that can be written to a TOML config file.
         """
-
-        class Missing:
-            def __bool__(self) -> bool:
-                return True
-
-        all_keys: RawKeyBinding = self.__dict__  # type: ignore[assignment]
-        if not all_keys.get("key_display", Missing):
-            all_keys.pop("key_display")
+        all_keys: RawKeyBinding = dict(self.__dict__)  # type: ignore[assignment]
+        for optional in ("key_display", "show"):
+            if all_keys.get(optional) is None:
+                all_keys.pop(optional, None)  # type: ignore[misc]
         return all_keys
 
 
@@ -63,7 +70,8 @@ class HarlequinKeyMap:
                 title="Harlequin could not load your keymap.",
                 msg=(
                     "Key bindings must be defined in config files with "
-                    "only three properties: `keys`, `action`, and `key_profile`. "
+                    "only these properties: `keys`, `action`, `key_display`, "
+                    "and `show`. "
                     f"Got a binding in the map named {name} that tried to define "
                     f"a property: {bad_key!r}"
                 ),

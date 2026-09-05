@@ -110,7 +110,7 @@ from harlequin.transaction_mode import HarlequinTransactionMode
 if TYPE_CHECKING:
     from textual.await_complete import AwaitComplete
 
-    from harlequin.keymap import HarlequinKeyMap
+    from harlequin.keymap import HarlequinKeyBinding, HarlequinKeyMap
     from harlequin.ssh import SshTunnel
 
 
@@ -258,6 +258,18 @@ def _harlequin_version() -> str:
         return version("harlequin")
     except PackageNotFoundError:  # pragma: no cover -- an uninstalled checkout
         return "unknown"
+
+
+def _footer_slot(binding: "HarlequinKeyBinding", action: Action) -> bool:
+    """Whether the footer lists this binding.
+
+    The binding decides when it says so; otherwise the action does, with the rule
+    that a `key_display` implies the binding wanted to be seen -- which was true of
+    every binding that set one before `show` existed.
+    """
+    if binding.show is not None:
+        return binding.show
+    return action.show or bool(binding.key_display)
 
 
 class Harlequin(AppBase):
@@ -996,7 +1008,7 @@ class Harlequin(AppBase):
                             keys=binding.keys,
                             action=action.action,
                             description=action.description,
-                            show=action.show,
+                            show=_footer_slot(binding, action),
                             key_display=binding.key_display,
                             priority=action.priority,
                         )
@@ -1265,7 +1277,7 @@ class Harlequin(AppBase):
                             keys=binding.keys,
                             action=action.action,
                             description=action.description,
-                            show=action.show,
+                            show=_footer_slot(binding, action),
                             key_display=binding.key_display,
                             priority=action.priority,
                         )

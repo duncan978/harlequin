@@ -119,3 +119,62 @@ def test_no_key_is_bound_twice_in_the_same_context() -> None:
             clashes.append(f"{key} in {context or 'app'}: {previous} and {action}")
         seen[(context, key)] = action
     assert not clashes, "\n".join(clashes)
+
+
+# --- which keys the footer lists ---------------------------------------------
+#
+# A footer with thirty keys in it is a footer nobody reads, and the keys worth
+# listing are not the keys worth binding. `show` on a binding is how a keymap
+# adds ten commands and puts one of them on screen.
+
+
+def test_a_binding_says_whether_the_footer_lists_it() -> None:
+    from harlequin.actions import Action
+    from harlequin.app import _footer_slot
+    from harlequin.keymap import HarlequinKeyBinding
+
+    quiet_action = Action(target=None, action="a", show=False)
+    loud_action = Action(target=None, action="a", show=True)
+
+    def binding(**kwargs: object) -> HarlequinKeyBinding:
+        return HarlequinKeyBinding(keys="alt+x", action="a", **kwargs)  # type: ignore[arg-type]
+
+    # the action decides when the binding says nothing
+    assert _footer_slot(binding(), quiet_action) is False
+    assert _footer_slot(binding(), loud_action) is True
+    # a key_display still implies "show me", as it did before `show` existed
+    assert _footer_slot(binding(key_display="alt+x"), quiet_action) is True
+    # and the binding overrules both, in either direction
+    assert _footer_slot(binding(show=False, key_display="alt+x"), quiet_action) is False
+    assert _footer_slot(binding(show=False), loud_action) is False
+    assert _footer_slot(binding(show=True), quiet_action) is True
+
+
+def test_a_binding_written_back_to_config_keeps_only_what_it_was_given() -> None:
+    from harlequin.keymap import HarlequinKeyBinding
+
+    bare = HarlequinKeyBinding(keys="alt+x", action="a").to_dict()
+    assert bare == {"keys": "alt+x", "action": "a"}
+    full = HarlequinKeyBinding(
+        keys="alt+x", action="a", key_display="⌥x", show=False
+    ).to_dict()
+    assert full == {
+        "keys": "alt+x",
+        "action": "a",
+        "key_display": "⌥x",
+        "show": False,
+    }, "show = false must survive a round trip, or the footer fills up again"
+
+
+def test_a_keymap_from_config_may_set_show() -> None:
+    from harlequin.keymap import HarlequinKeyMap
+
+    keymap = HarlequinKeyMap.from_config(
+        name="workbench",
+        bindings=[
+            {"keys": "alt+c", "action": "show_command_menu", "key_display": "alt+c"},
+            {"keys": "alt+b", "action": "command.x", "show": False},
+        ],
+    )
+    assert keymap.bindings[0].show is None
+    assert keymap.bindings[1].show is False

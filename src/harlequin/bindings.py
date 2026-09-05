@@ -27,7 +27,7 @@ def bind(
                 if description
                 else " ".join([w.capitalize() for w in action.split("_")])
             ),
-            show=show or bool(key_display),
+            show=show,
             key_display=key_display,
             priority=priority,
         )
