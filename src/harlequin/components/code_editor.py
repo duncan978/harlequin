@@ -20,7 +20,7 @@ from textual.timer import Timer
 from textual.widgets import Input, Tab, Tabs, TextArea
 from textual.widgets.text_area import EditHistory, Location, Selection
 from textual.worker import Worker, WorkerState
-from textual_textarea import TextAreaSaved, TextEditor
+from textual_textarea import PathInput, TextAreaSaved, TextEditor
 
 from harlequin.autocomplete import (
     NO_SYMBOLS,
@@ -447,6 +447,43 @@ class CodeEditor(TextEditor, inherit_bindings=False):
         # way is 4.70:1 for comments and 3.42:1 for the gutter, and two thirds clears
         # 4.5:1 on both the light and the dark themes shipped here.
         return background.blend(foreground, factor=0.65).hex
+
+    async def action_save(self) -> None:
+        """Save, with the box already holding the file this buffer came from.
+
+        Upstream mounts an empty path input every time, so saving a file you
+        opened a minute ago means typing its path again from memory. The path is
+        already known -- `_remember_path` records it whenever a buffer is opened,
+        and the watched directory records the `opened/` copy it just wrote -- so
+        the box comes up holding it and Enter saves over the file.
+
+        Still a prompt, deliberately (Duncan, Phase 5 UAT 2026-09-05): `ctrl+s`
+        goes on meaning "say where this goes", and the answer is merely already
+        typed. Making it a silent write would change what the key means for every
+        buffer, including one opened read-only-ish with `ctrl+o`. A buffer with no
+        path gets the empty box it has always had.
+        """
+        path = None
+        collection = self.parent
+        if isinstance(collection, EditorCollection):
+            path = collection.active_buffer_path()
+        if path is None:
+            await super().action_save()
+            return
+        # The id is upstream's: `TextEditor.save_file` is decorated
+        # `@on(Input.Submitted, "#textarea__save_input")`, so the submit routes to
+        # the same handler an unprefilled box would have used.
+        await self._mount_footer_input(
+            input_widget=PathInput(
+                id="textarea__save_input",
+                value=str(path),
+                placeholder="Save: Enter file path OR press ESC to cancel",
+                file_okay=True,
+                dir_okay=False,
+                must_exist=False,
+                classes="textarea--footer-input",
+            )
+        )
 
 class EditorCollection(Vertical):
     """
