@@ -69,7 +69,9 @@ def test_empty_output_is_not_an_error() -> None:
 
 def test_a_nonzero_exit_keeps_stderr() -> None:
     result = run_command(
-        child("import sys; sys.stderr.write('this buffer has no file\\n'); sys.exit(2)"),
+        child(
+            "import sys; sys.stderr.write('this buffer has no file\\n'); sys.exit(2)"
+        ),
         env={},
     )
     assert not result.ok
@@ -254,15 +256,11 @@ def test_the_menu_leads_with_the_ordered_commands_then_the_rest() -> None:
         "no_order": command(description="Aardvark"),
         "later": command(description="Later", order=5),
     }
-    ranked = sorted(
-        commands, key=lambda name: CommandList._rank(commands[name], name)
-    )
+    ranked = sorted(commands, key=lambda name: CommandList._rank(commands[name], name))
     assert ranked == ["alpha", "zulu", "later", "no_order"]
 
 
 def test_a_command_with_no_description_is_ranked_by_its_name() -> None:
     commands = {"b_named": command(order=0), "a_named": command(order=0)}
-    ranked = sorted(
-        commands, key=lambda name: CommandList._rank(commands[name], name)
-    )
+    ranked = sorted(commands, key=lambda name: CommandList._rank(commands[name], name))
     assert ranked == ["a_named", "b_named"]

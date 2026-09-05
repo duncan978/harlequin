@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any, Iterable, Iterator, Literal, Mapping, Sequence, Type, TypeVar
 
 from .compute import CastOptions
+from .lib import ArrowException as ArrowException
+from .lib import ArrowInvalid as ArrowInvalid
+from .lib import ArrowNotImplementedError as ArrowNotImplementedError
 
 class DataType: ...
 

@@ -22,8 +22,10 @@ Two rules keep a half-written file off the screen:
   moment between a producer's two renames.
 * **Opening a file moves it** to `DIR/opened/`, so the same query is not
   offered twice and the buffer that shows it still has a real path behind it.
-  A name already taken there gains `-2`, `-3`: the point of the directory is
-  that nothing is lost in it.
+  A name already taken there gains `-2`, `-3` -- checked and picked before the
+  move, so two claims racing each other can still both pick the same free
+  name and one overwrite the other; the directory is single-user in practice,
+  which is what makes that acceptable.
 """
 
 from __future__ import annotations
@@ -57,6 +59,17 @@ without the rows a producer was in the middle of sending with it.
 OPENED = "opened"
 """Subdirectory an opened file is moved to. Also why the scan ignores directories."""
 
+MAX_CSV_BYTES = 100 * 1024 * 1024
+"""The largest `.csv` the watcher will open, in bytes.
+
+`result_set_from_csv()` hands the whole file to `pyarrow.csv.read_csv()`, which
+materialises it in memory before `viewer_max_rows` gets a chance to truncate
+anything -- that cap bounds what the grid displays, not what gets read. 100 MB
+is comfortably inside what a terminal app can hold for one result set (it is
+still hundreds of thousands of rows for most exports) while a producer gone
+wrong and dropping a multi-gigabyte file gets a refusal instead of an OOM.
+"""
+
 
 @dataclass
 class WatchedItem:
@@ -69,6 +82,11 @@ class WatchedItem:
     csv: Path | None
     changed_at: float
     """The newer of the two mtimes, for ordering: oldest first, as a queue."""
+
+    csv_skipped: str | None = None
+    """Set when a `.csv` was found but over `MAX_CSV_BYTES`: `csv` is None instead
+    of the path, and this says why, so the size limit is a refusal the user can
+    see rather than a file that silently never opens."""
 
     @property
     def paths(self) -> list[Path]:
@@ -92,6 +110,7 @@ def scan(
     now = time.time() if now is None else now
     found: dict[str, dict[str, Path]] = {}
     ages: dict[str, float] = {}
+    sizes: dict[str, int] = {}
     try:
         entries = sorted(watch_dir.iterdir())
     except OSError:
@@ -102,21 +121,35 @@ def scan(
         try:
             if not entry.is_file():
                 continue
-            mtime = entry.stat().st_mtime
+            stat = entry.stat()
         except OSError:
             continue
         found.setdefault(entry.stem, {})[entry.suffix.lower()] = entry
-        ages[entry.stem] = max(ages.get(entry.stem, 0.0), mtime)
-    items = [
-        WatchedItem(
-            name=stem,
-            sql=paths.get(".sql"),
-            csv=paths.get(".csv"),
-            changed_at=ages[stem],
+        ages[entry.stem] = max(ages.get(entry.stem, 0.0), stat.st_mtime)
+        if entry.suffix.lower() == ".csv":
+            sizes[entry.stem] = stat.st_size
+    items = []
+    for stem, paths in found.items():
+        if now - ages[stem] < min_age:
+            continue
+        csv_path = paths.get(".csv")
+        csv_skipped = None
+        size = sizes.get(stem)
+        if csv_path is not None and size is not None and size > MAX_CSV_BYTES:
+            csv_skipped = "%s is %d MB; too big to open" % (
+                csv_path.name,
+                size // (1024 * 1024),
+            )
+            csv_path = None
+        items.append(
+            WatchedItem(
+                name=stem,
+                sql=paths.get(".sql"),
+                csv=csv_path,
+                changed_at=ages[stem],
+                csv_skipped=csv_skipped,
+            )
         )
-        for stem, paths in found.items()
-        if now - ages[stem] >= min_age
-    ]
     items.sort(key=lambda item: (item.changed_at, item.name))
     return items
 
@@ -129,6 +162,12 @@ def claim(path: Path, watch_dir: Path) -> Path:
     the file to be offered again on the next poll. Returns the original path
     when the move is not possible, which keeps a read-only directory usable
     (at the cost of being offered its files again next time Harlequin starts).
+
+    The free-name check and the move are two separate steps, not one atomic
+    one, so a second claim landing between them can still pick the same
+    `-N` name and overwrite what the first one just moved there -- this is
+    fine for the one watcher process this is written for, not a guarantee
+    against a concurrent claimant.
     """
     path = Path(path)
     dest_dir = opened_dir(watch_dir)

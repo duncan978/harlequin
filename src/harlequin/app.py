@@ -107,7 +107,7 @@ from harlequin.plugins import load_keymap_plugins
 from harlequin.query import ExecutedStatement, ResultSet, RowLimit, execute, fetch
 from harlequin.statements import Statement
 from harlequin.transaction_mode import HarlequinTransactionMode
-from harlequin.watch import claim, result_set_from_csv, scan
+from harlequin.watch import WatchedItem, claim, result_set_from_csv, scan
 
 if TYPE_CHECKING:
     from textual.await_complete import AwaitComplete
@@ -357,7 +357,12 @@ class Harlequin(AppBase):
         # A directory another program drops `*.sql` and `*.csv` into (harlequin.watch).
         # Polled, not watched with an OS event: a poll is a dozen lines that behave the
         # same on every platform and over a network mount, and two seconds is not a
-        # latency anyone is waiting on.
+        # latency anyone is waiting on. The poll is a synchronous `stat()` of every
+        # entry in the directory, run on the event loop every WATCH_POLL_SECONDS, so
+        # it is not free on a directory with many files or a slow mount; and
+        # `scan()`'s `min_age` compares a producer's mtime against this machine's
+        # clock, so a producer on another host with a skewed clock can make a
+        # settled file wait longer than MIN_AGE, or shorter, rather than exactly that.
         self.watch_dir = Path(watch_dir).expanduser() if watch_dir else None
         self._watched_names: set[str] = set()
         """Names already announced, so a poll does not re-announce what is waiting."""
@@ -1850,6 +1855,10 @@ class Harlequin(AppBase):
         just run rather than the rows it produced -- the one thing the user cannot have
         meant, since the rows are what they are looking at. Selecting something after a
         query has run still wins, which is the case the ordering is there for.
+
+        Which means a configured `fallback_stdin` order is a preference, not a
+        guarantee: a user who lists `["selection", "results"]` and gets `results` sent
+        has to read `HARLEQUIN_STDIN` to find out this reordering is why.
         """
         if "selection" not in sources:
             return sources
@@ -1887,7 +1896,7 @@ class Harlequin(AppBase):
         fallbacks = command.fallback_stdin or []
         if isinstance(fallbacks, str):
             fallbacks = [fallbacks]
-        sources = [command.stdin]
+        sources: list[str] = [command.stdin]
         for extra in fallbacks:
             if extra not in sources:
                 sources.append(extra)
@@ -1931,9 +1940,7 @@ class Harlequin(AppBase):
 
         argv = command.argv()
         if not argv:
-            self.notify(
-                f"Command {name!r} names no program to run.", severity="error"
-            )
+            self.notify(f"Command {name!r} names no program to run.", severity="error")
             return None
         return CommandInvocation(
             name=name,
@@ -1992,9 +1999,7 @@ class Harlequin(AppBase):
         if source == "section":
             section = self.editor_collection.section_under_cursor()
             if section is None:
-                warn(
-                    "The cursor is not in a section. Start a line with `-- ## Name`."
-                )
+                warn("The cursor is not in a section. Start a line with `-- ## Name`.")
                 return None
             text, _name = section
             if not text.strip():
@@ -2482,7 +2487,7 @@ class Harlequin(AppBase):
             return
         self.run_worker(self._open_watched(items), exclusive=False)
 
-    async def _open_watched(self, items: list) -> None:
+    async def _open_watched(self, items: list[WatchedItem]) -> None:
         """One item at a time: the rows first, then the SQL that produced them.
 
         The rows go in before the query so that focus ends on the editor, which is
@@ -2493,13 +2498,29 @@ class Harlequin(AppBase):
         Each file is *claimed* (moved to `opened/`) before it is read, so a failure
         cannot leave the same file to be offered again on every poll: it is in
         `opened/`, under its own name, and the error says which one it was.
+
+        The two reads pyarrow and `Path.read_text` do are genuinely blocking, so
+        each runs in the default executor rather than on this coroutine's own
+        thread -- the event loop, and the cancel key, stay live while a large file
+        is read.
         """
+        watch_dir = self.watch_dir
+        if watch_dir is None:
+            return
+        loop = asyncio.get_running_loop()
         for item in items:
             self._watched_names.discard(item.name)
+            if item.csv_skipped is not None:
+                self.notify(item.csv_skipped, severity="warning")
             if item.csv is not None:
-                path = claim(item.csv, self.watch_dir)
+                path = claim(item.csv, watch_dir)
                 try:
-                    result = result_set_from_csv(path, max_rows=self.viewer_max_rows)
+                    result = await loop.run_in_executor(
+                        None,
+                        partial(
+                            result_set_from_csv, path, max_rows=self.viewer_max_rows
+                        ),
+                    )
                 except Exception as e:  # noqa: BLE001 -- pyarrow raises many things
                     self.notify(
                         "Could not read %s: %s" % (path.name, e), severity="error"
@@ -2517,9 +2538,11 @@ class Harlequin(AppBase):
                         )
                     self.results_viewer.show_table(did_run=False)
             if item.sql is not None:
-                path = claim(item.sql, self.watch_dir)
+                path = claim(item.sql, watch_dir)
                 try:
-                    text = path.read_text(encoding="utf-8")
+                    text = await loop.run_in_executor(
+                        None, partial(path.read_text, encoding="utf-8")
+                    )
                 except (OSError, UnicodeDecodeError) as e:
                     self.notify(
                         "Could not read %s: %s" % (path.name, e), severity="error"

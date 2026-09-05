@@ -541,7 +541,7 @@ def build_cli(argv: Sequence[str]) -> click.Command:
             "there, paired by name. Nothing opens on its own: Harlequin says how many "
             "are waiting and the `open_watched` key (alt+i) opens them -- the SQL as a "
             "buffer, the CSV as a pinned result tab. An opened file moves to "
-            "<DIR>/opened/."
+            "<DIR>/opened/, and anything that can write here can put SQL in the editor."
         ),
     )
     @click.option(

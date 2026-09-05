@@ -378,15 +378,14 @@ class CodeEditor(TextEditor, inherit_bindings=False):
         if hasattr(self.app, "action_focus_data_catalog"):
             self.app.action_focus_data_catalog()
 
-
     def watch_theme(self, theme: str) -> None:
         """Register the computed syntax theme, then make its two dimmest styles legible.
 
         `textual_textarea` builds a syntax theme for any app theme it does not know by
         blending foreground into background at 50% for comments, and leaves the gutter
-        to whatever Textual derives. Measured on this workbench's palette against its
-        own background: comments land at 4.70:1 and the line numbers at 3.42:1, the
-        latter under the 4.5:1 that ordinary text is expected to clear.
+        to whatever Textual derives. Measured on a representative dark theme against
+        its own background: comments land at 4.70:1 and the line numbers at 3.42:1,
+        the latter under the 4.5:1 that ordinary text is expected to clear.
 
         The theme already carries a colour for exactly this job -- `$text-muted`, which
         is 5.66:1 here -- and the blend ignores it. So: let the package compute the
@@ -399,7 +398,7 @@ class CodeEditor(TextEditor, inherit_bindings=False):
         is the least readable text on the screen.
         """
         super().watch_theme(theme)
-        if not self.text_input.is_mounted:
+        if self.text_input is None or not self.text_input.is_mounted:
             return
         muted = self._muted_colour()
         if muted is None:
@@ -415,8 +414,8 @@ class CodeEditor(TextEditor, inherit_bindings=False):
             gutter_style=Style(color=muted),
             syntax_styles={
                 **registered.syntax_styles,
-                "comment": muted,
-                "string.documentation": muted,
+                "comment": Style(color=muted),
+                "string.documentation": Style(color=muted),
             },
         )
         self.text_input.register_theme(corrected)
@@ -443,9 +442,9 @@ class CodeEditor(TextEditor, inherit_bindings=False):
             foreground = Color.parse(variables["foreground"])
         except Exception:
             return None
-        # 0.65 rather than the package's 0.5: measured on this workbench's palette, half
-        # way is 4.70:1 for comments and 3.42:1 for the gutter, and two thirds clears
-        # 4.5:1 on both the light and the dark themes shipped here.
+        # 0.65 rather than the package's 0.5: measured on a representative dark theme,
+        # half way is 4.70:1 for comments and 3.42:1 for the gutter, and two thirds
+        # clears 4.5:1 on both the light and the dark themes shipped here.
         return background.blend(foreground, factor=0.65).hex
 
     async def action_save(self) -> None:
@@ -463,27 +462,21 @@ class CodeEditor(TextEditor, inherit_bindings=False):
         buffer, including one opened read-only-ish with `ctrl+o`. A buffer with no
         path gets the empty box it has always had.
         """
+        await super().action_save()
         path = None
         collection = self.parent
         if isinstance(collection, EditorCollection):
             path = collection.active_buffer_path()
         if path is None:
-            await super().action_save()
             return
         # The id is upstream's: `TextEditor.save_file` is decorated
-        # `@on(Input.Submitted, "#textarea__save_input")`, so the submit routes to
-        # the same handler an unprefilled box would have used.
-        await self._mount_footer_input(
-            input_widget=PathInput(
-                id="textarea__save_input",
-                value=str(path),
-                placeholder="Save: Enter file path OR press ESC to cancel",
-                file_okay=True,
-                dir_okay=False,
-                must_exist=False,
-                classes="textarea--footer-input",
-            )
-        )
+        # `@on(Input.Submitted, "#textarea__save_input")`, so setting `.value` on
+        # the box upstream already mounted routes the submit to the same handler
+        # an unprefilled box would have used. Setting it fires `Input.Changed`,
+        # which is what makes the footer read "Saving to ~/...".
+        save_input = self.query_one("#textarea__save_input", PathInput)
+        save_input.value = str(path)
+
 
 class EditorCollection(Vertical):
     """
@@ -791,9 +784,7 @@ class EditorCollection(Vertical):
     def _sections(self) -> list[Section]:
         return find_sections(self.editor.text)
 
-    def _cursor_section(
-        self, sections: list[Section] | None = None
-    ) -> Section | None:
+    def _cursor_section(self, sections: list[Section] | None = None) -> Section | None:
         """The section the cursor is in."""
         sections = self._sections() if sections is None else sections
         if not sections or self.editor.text_input is None:

@@ -1447,7 +1447,7 @@ max_rows = 200
 
     def test_a_command_as_a_string_is_split(self, tmp_path: Path) -> None:
         path = tmp_path / "harlequin.toml"
-        path.write_text('[commands.fmt]\ncommand = "my-tool --kind \'two words\'"\n')
+        path.write_text("[commands.fmt]\ncommand = \"my-tool --kind 'two words'\"\n")
         (command,) = load_config(config_path=path).commands.values()
         assert command.argv() == ["my-tool", "--kind", "two words"]
         assert command.stdin == "none", "a command is given nothing unless it asks"
@@ -1521,7 +1521,7 @@ max_rows = 200
                 "may only hold letters",
             ),
             ("[commands.send]\ncommand = []\n", "names no program"),
-            ("[commands.send]\ncommand = [\"x\"]\ntimeout = 0\n", "before it started"),
+            ('[commands.send]\ncommand = ["x"]\ntimeout = 0\n', "before it started"),
             (
                 '[commands.send]\ncommand = ["x"]\nmax_rows = 200\n',
                 "rather than results",

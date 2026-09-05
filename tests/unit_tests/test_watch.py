@@ -128,7 +128,7 @@ def test_a_row_cap_applies_the_way_a_query_limit_does(tmp_path: Path) -> None:
 
 def test_an_unreadable_csv_raises_for_the_caller_to_show(tmp_path: Path) -> None:
     path = _drop(tmp_path, "bad.csv", "")
-    with pytest.raises(Exception):
+    with pytest.raises(pa.ArrowInvalid):
         result_set_from_csv(path)
 
 

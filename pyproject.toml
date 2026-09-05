@@ -1,7 +1,7 @@
 [project]
 
 name = "harlequin"
-version = "2.13.0+insurify.20"
+version = "2.13.0+insurify.21"
 requires-python = ">=3.10"
 description = "The SQL IDE for Your Terminal."
 authors = [
@@ -231,6 +231,13 @@ warn_unused_configs = true
 
 no_implicit_reexport = true
 strict_equality = true
+
+
+[[tool.mypy.overrides]]
+
+# pyarrow.csv ships no py.typed marker and no stub of its own.
+module = "pyarrow.csv"
+ignore_missing_imports = true
 
 
 [tool.pytest.ini_options]

@@ -165,9 +165,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
         so it has to hear about every result that replaces the one it shows.
         """
 
-        def __init__(
-            self, columns: list[tuple[str, str]], current: int | None
-        ) -> None:
+        def __init__(self, columns: list[tuple[str, str]], current: int | None) -> None:
             self.columns = columns
             self.current = current
             super().__init__()
@@ -186,15 +184,15 @@ class ResultsViewer(TabbedContent, can_focus=True):
         self._pinned: set[str] = set()
         self._sql_by_pane: dict[str, str] = {}
         self._elapsed_by_pane: dict[str, float] = {}
-        self._arrived_by_pane: dict[str, float] = {}
-        """When each result landed, on the monotonic clock. A command that has to choose
-        between a result and something else needs to know which of them is newer."""
         """How long each result took to fetch, as its run reported it.
 
         Recorded here rather than asked of the table, because it is a fact about the
         run and not about the grid, and a configured command that hands a result to
         another program is expected to say how long it took.
         """
+        self._arrived_by_pane: dict[str, float] = {}
+        """When each result landed, on the monotonic clock. A command that has to choose
+        between a result and something else needs to know which of them is newer."""
         self._names: dict[str, str] = {}
         self._activate_next_push = False
         self._last_pushed: str | None = None

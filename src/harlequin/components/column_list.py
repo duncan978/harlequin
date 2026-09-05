@@ -136,9 +136,7 @@ class ColumnList(Vertical, can_focus=True):
         self.visible_indexes = [
             i
             for i, (name, type_label) in enumerate(self.columns)
-            if not needle
-            or needle in name.lower()
-            or needle in str(type_label).lower()
+            if not needle or needle in name.lower() or needle in str(type_label).lower()
         ]
         self.option_list.clear_options()
         self.option_list.add_options(

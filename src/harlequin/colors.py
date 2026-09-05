@@ -42,10 +42,11 @@ VALID_THEMES.pop("ansi-light", None)
 VALID_THEMES.update({"harlequin": HARLEQUIN_TEXTUAL_THEME})
 
 # -- themes from a file ----------------------------------------------------
-# `--theme` (and the `theme` config key) takes the name of a built-in theme or the PATH of a
-# theme file. A path is how you match Harlequin to a palette that is generated rather than
-# chosen from a list: the terminal, the multiplexer and the editor can all be given exact hex
-# values, and until this existed Harlequin could only be given the nearest built-in name.
+# `--theme` (and the `theme` config key) takes the name of a built-in theme or the
+# PATH of a theme file. A path is how you match Harlequin to a palette that is
+# generated rather than chosen from a list: the terminal, the multiplexer and the
+# editor can all be given exact hex values, and until this existed Harlequin could
+# only be given the nearest built-in name.
 #
 # The file is TOML or JSON, one table of the fields of a Textual theme:
 #

@@ -313,8 +313,7 @@ class CommandConfig(msgspec.Struct, forbid_unknown_fields=True):
 
             if sys.platform == "win32":
                 return [
-                    token.strip('"')
-                    for token in shlex.split(self.command, posix=False)
+                    token.strip('"') for token in shlex.split(self.command, posix=False)
                 ]
             return shlex.split(self.command)
         return list(self.command)
@@ -979,9 +978,7 @@ def _validate_profile(
     )
 
 
-def _validate_command(
-    name: str, command: CommandConfig, *, problems: Problems
-) -> None:
+def _validate_command(name: str, command: CommandConfig, *, problems: Problems) -> None:
     """One `[commands.x]` table through the checks the IDE runs when it next starts.
 
     `stdin` and `output` are `Literal`s, so msgspec has already refused a value that is

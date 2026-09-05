@@ -152,7 +152,9 @@ class SectionList(Vertical, can_focus=True):
     def _set_title(self, matched: int) -> None:
         total = len(self.sections)
         self.option_list.border_title = (
-            f"Sections ({total})" if matched == total else f"Sections ({matched} of {total})"
+            f"Sections ({total})"
+            if matched == total
+            else f"Sections ({matched} of {total})"
         )
 
 

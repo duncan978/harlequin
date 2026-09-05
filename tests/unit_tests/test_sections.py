@@ -70,8 +70,16 @@ CORPUS: list[tuple[str, str, list[tuple[str, int]]]] = [
         "-- ## One\nselect '-- ## Two';",
         [("One", 2)],
     ),
-    ("a section with no SQL under it", "-- ## One\n-- ## Two\nselect 2;", [("One", 2), ("Two", 2)]),
-    ("non-ascii before a marker", "select '日本語' as x;\n-- ## One\nselect 1;", [(PREAMBLE_NAME, 0), ("One", 2)]),
+    (
+        "a section with no SQL under it",
+        "-- ## One\n-- ## Two\nselect 2;",
+        [("One", 2), ("Two", 2)],
+    ),
+    (
+        "non-ascii before a marker",
+        "select '日本語' as x;\n-- ## One\nselect 1;",
+        [(PREAMBLE_NAME, 0), ("One", 2)],
+    ),
 ]
 
 

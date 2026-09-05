@@ -456,7 +456,8 @@
               }
             }
           ],
-          "default": null
+          "default": null,
+          "description": "A list is a preference, not a guarantee: `results` can be sent ahead of an earlier `selection` when the result on screen is the newer of the two. Check HARLEQUIN_STDIN to see which source actually won."
         },
         "order": {
           "anyOf": [

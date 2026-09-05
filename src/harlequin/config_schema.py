@@ -87,6 +87,11 @@ DESCRIPTIONS = {
         "What to connect to, which both commands take positionally. One string, "
         "or an array of them for an adapter that takes several."
     ),
+    "fallback_stdin": (
+        "A list is a preference, not a guarantee: `results` can be sent ahead of "
+        "an earlier `selection` when the result on screen is the newer of the "
+        "two. Check HARLEQUIN_STDIN to see which source actually won."
+    ),
 }
 """Written here for the keys nothing else describes: the three top-level tables,
 and the one profile key click has no help text for because it is an argument."""
@@ -191,6 +196,9 @@ def _command() -> dict[str, Any]:
         "argv (or a string), `stdin` says what it is given, `output` what is done with "
         "what it writes back."
     )
+    schema["properties"]["fallback_stdin"]["description"] = DESCRIPTIONS[
+        "fallback_stdin"
+    ]
     schema["additionalProperties"] = False
     return schema
 

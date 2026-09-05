@@ -48,9 +48,9 @@ class AppBase(App, inherit_bindings=False):
         super().__init__(driver_class, css_path, watch_css)
         self.register_theme(HARLEQUIN_TEXTUAL_THEME)
         name = theme or "harlequin"
-        # A `--theme` that names a file is loaded and registered, so a generated palette can
-        # be handed to Harlequin exactly instead of being approximated by the nearest
-        # built-in name. Anything else is a theme name, as before.
+        # A `--theme` that names a file is loaded and registered, so a generated
+        # palette can be handed to Harlequin exactly instead of being approximated
+        # by the nearest built-in name. Anything else is a theme name, as before.
         try:
             if theme and looks_like_a_theme_file(theme):
                 custom = load_theme_file(theme)

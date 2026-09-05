@@ -163,6 +163,10 @@ def find_sections(text: str) -> list[Section]:
     matched = captures(text, SECTION_QUERY)
     markers: list[tuple[int, str, int]] = []  # (byte offset, name, level)
     for node in sorted(matched.get("comment", []), key=lambda n: n.start_byte):
+        # tree-sitter gives a node no text when the tree is out of date with the
+        # buffer, which a keystroke between the parse and this loop can do.
+        if node.text is None:
+            continue
         match = MARKER.match(node.text.decode("utf-8", errors="replace"))
         if match is None:
             continue
@@ -174,7 +178,9 @@ def find_sections(text: str) -> list[Section]:
     line_starts = _line_starts(text)
 
     def row_of(offset: int) -> int:
-        return min(max(bisect_right(line_starts, offset) - 1, 0), max(len(line_starts) - 2, 0))
+        return min(
+            max(bisect_right(line_starts, offset) - 1, 0), max(len(line_starts) - 2, 0)
+        )
 
     def next_row_start(offset: int) -> tuple[int, int]:
         """The offset and row where the line after `offset` begins."""
@@ -198,7 +204,7 @@ def find_sections(text: str) -> list[Section]:
                 body_row=body_row,
             )
         )
-    for i, (start, (_, name, level)) in enumerate(zip(starts, markers)):
+    for i, (start, (_, name, level)) in enumerate(zip(starts, markers, strict=True)):
         end = starts[i + 1] if i + 1 < len(starts) else len(text)
         body_start, body_row = next_row_start(start)
         sections.append(

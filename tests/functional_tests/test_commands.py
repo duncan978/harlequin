@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 import pytest
-
 from textual.widgets.text_area import Selection
 
 from harlequin import Harlequin
