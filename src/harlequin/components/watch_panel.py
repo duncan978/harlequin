@@ -60,6 +60,15 @@ FOOTER_TEXT = (
 )
 
 
+def item_key(item: WatchedItem) -> tuple[str, str]:
+    """What makes two `WatchedItem`s the same offer.
+
+    `scan()` builds a fresh object every poll, so identity is no use; the name and
+    what it is holding are what a press is about.
+    """
+    return (item.name, _kind(item))
+
+
 def _kind(item: WatchedItem) -> str:
     """`sql`, `csv`, or `sql+csv`: what this item actually has to offer."""
     if item.sql is not None and item.csv is not None:
@@ -187,6 +196,9 @@ class WatchPanel(ModalScreen[None]):
         super().__init__(name, id, classes)
         self.watch_dir = watch_dir
         self.jump_to_newest = jump_to_newest
+        self._in_flight: set[tuple[str, str]] = set()
+        """Items with an action still running, so a second press on one is ignored
+        rather than claiming a file the first press has already moved."""
 
     def compose(self) -> ComposeResult:
         with VerticalSuppressClicks(id="modal_outer"):
@@ -214,10 +226,25 @@ class WatchPanel(ModalScreen[None]):
     def handle_item_picked(self, message: WatchList.ItemPicked) -> None:
         message.stop()
         app = cast("Harlequin", self.app)
-        self.run_worker(self._act(app, message.item, message.action), exclusive=False)
+        # A second press on an item already being acted on would claim a file that
+        # the first press has moved: `claim()` hands back the original path when the
+        # move fails, and the read that follows says "no such file" about a file that
+        # is fine and already open. The list cannot show the item as gone until the
+        # action finishes, so the guard is here rather than in the redraw.
+        if item_key(message.item) in self._in_flight:
+            return
+        self._in_flight.add(item_key(message.item))
+        # The worker belongs to the *app*, not to this screen: the poll timer can
+        # dismiss the panel the moment `scan()` comes back empty, and a worker owned
+        # by a dismissed screen is cancelled with it -- mid-action, after `claim()`
+        # has already moved the file out of the queue and before its buffer opens.
+        app.run_worker(self._act(app, message.item, message.action), exclusive=False)
 
     async def _act(self, app: "Harlequin", item: WatchedItem, action: str) -> None:
-        await app.act_on_watched_item(item, action)
+        try:
+            await app.act_on_watched_item(item, action)
+        finally:
+            self._in_flight.discard(item_key(item))
         # the screen may have dismissed itself already, from an empty scan the
         # poll timer found while the action was still running
         if self in app.screen_stack:

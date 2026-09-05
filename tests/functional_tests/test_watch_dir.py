@@ -376,3 +376,130 @@ async def test_a_symlinked_item_remembers_the_origin_not_the_moved_link(
         path = app.editor_collection.active_buffer_path()
         assert path == origin
         assert not path.is_symlink()
+
+
+@pytest.mark.asyncio
+async def test_the_panel_stays_open_between_two_picks(
+    duckdb_adapter: type[HarlequinAdapter],
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+) -> None:
+    """One item leaving the queue is not a reason to close the panel on the rest.
+
+    The panel's whole claim over the old open-everything key is that a press
+    decides nothing by itself; that only holds if the second decision is still
+    reachable after the first one is made."""
+    _drop(tmp_path, "first.sql", "select 1")
+    _drop(tmp_path, "second.sql", "select 2")
+    app = _watching(duckdb_adapter, tmp_path)
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("alt+i")
+        await pilot.pause()
+        await pilot.press("d")
+        await wait_for_workers(app)
+        await pilot.pause()
+
+        panel = _panel(app)
+        assert panel is not None, "the other item still has to be decided about"
+        assert [item.name for item in panel.query_one(WatchList).items] == ["second"]
+
+        await pilot.press("enter")
+        await wait_for_workers(app)
+        await pilot.pause()
+        assert app.editor.text == "select 2"
+        assert _panel(app) is None
+
+
+@pytest.mark.asyncio
+async def test_a_second_press_on_an_item_already_running_is_ignored(
+    duckdb_adapter: type[HarlequinAdapter],
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+) -> None:
+    """The row cannot disappear until the action that empties it finishes, so a
+    double-tap arrives at an item whose file has already moved. Without the
+    guard the second press claims nothing, `claim()` hands back the original
+    path, and the read reports "no such file" about a file that is fine and
+    already open."""
+    _drop(tmp_path, "carrier-mix.sql", "select 1 as one")
+    app = _watching(duckdb_adapter, tmp_path)
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("alt+i")
+        await pilot.pause()
+
+        # both picks are posted before either action can run: the handler is
+        # synchronous and the work is a worker, which is exactly the interleaving
+        # a fast double-tap produces.
+        watch_list = _panel(app).query_one(WatchList)  # type: ignore[union-attr]
+        watch_list.action_pick("open")
+        watch_list.action_pick("open")
+        await wait_for_workers(app)
+        await pilot.pause()
+
+        assert not [n.message for n in app._notifications if n.severity == "error"], (
+            "the second press should do nothing, not fail loudly"
+        )
+        assert app.editor.text == "select 1 as one"
+        assert app.editor_collection.tabs.tab_count == 2
+
+
+@pytest.mark.asyncio
+async def test_an_action_finishes_even_if_the_panel_closes_under_it(
+    duckdb_adapter: type[HarlequinAdapter],
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+) -> None:
+    """The file is claimed before it is read, so an action cancelled halfway
+    leaves the item out of the queue and nothing on the screen. The panel's own
+    poll can dismiss it the instant `scan()` empties, which is while the read is
+    still going -- so the work belongs to the app, not to the screen."""
+    _drop(tmp_path, "carrier-mix.sql", "select 1 as one")
+    app = _watching(duckdb_adapter, tmp_path)
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("alt+i")
+        await pilot.pause()
+
+        panel = _panel(app)
+        assert panel is not None
+        panel.query_one(WatchList).action_pick("open")
+        panel.dismiss(None)
+        await wait_for_workers(app)
+        await pilot.pause()
+
+        assert app.editor.text == "select 1 as one"
+        assert not (tmp_path / "carrier-mix.sql").exists()
+
+
+@pytest.mark.asyncio
+async def test_the_toast_does_not_talk_over_the_open_panel(
+    duckdb_adapter: type[HarlequinAdapter],
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+) -> None:
+    """The panel is the livelier notice of the same thing; a toast under it would
+    only repeat what it already lists."""
+    _drop(tmp_path, "first.sql", "select 1")
+    app = _watching(duckdb_adapter, tmp_path)
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("alt+i")
+        await pilot.pause()
+        before = len([n for n in app._notifications if "waiting" in n.message])
+
+        _drop(tmp_path, "second.sql", "select 2")
+        app._poll_watch_dir()
+        await pilot.pause()
+
+        assert len([n for n in app._notifications if "waiting" in n.message]) == before
+        # and the panel itself picks the arrival up on its own poll
+        panel = _panel(app)
+        assert panel is not None
+        panel._refresh()
+        await pilot.pause()
+        assert [item.name for item in panel.query_one(WatchList).items] == [
+            "first",
+            "second",
+        ]
