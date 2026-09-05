@@ -867,3 +867,16 @@ RunQueryBar.narrow Button#run_query {
 RunQueryBar.narrow Button#transaction_button {
     min-width: 10;
 }
+
+/* A section tab (ctrl+backslash) is part of another tab and has to look like it.
+   Dimmed and italic, never a second hue: the palette must stay readable for someone
+   who cannot rely on telling colours apart. The label carries `> <parent number>`. */
+Tab.section-tab {
+    color: $text-muted;
+    text-style: italic;
+}
+
+Tab.section-tab.-active {
+    color: $text;
+    text-style: italic;
+}

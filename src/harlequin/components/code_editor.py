@@ -12,6 +12,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.color import Color
 from textual.containers import Vertical
+from textual.css.query import NoMatches
 from textual.geometry import Offset
 from textual.message import Message
 from textual.reactive import reactive
@@ -909,6 +910,30 @@ class EditorCollection(Vertical):
             original=body,
             name=section.name,
         )
+        self._mark_section_tab(new_id, parent_id, section.name)
+
+    def _mark_section_tab(self, buffer_id: str, parent_id: str, name: str) -> None:
+        """Say on the tab that it is part of another tab, and which.
+
+        A section tab was built exactly like a scratch buffer, so nothing on screen
+        told them apart -- and leaving one writes into a script it never named, which
+        is a bad thing to be unable to see. `> 2 Carrier revenue` reads as "part of
+        tab 2": an arrow, the parent's number, then the section.
+
+        A prefix rather than an indent, and a number rather than the parent's name,
+        because a tab strip in a 94-column pane has no room for either -- three or four
+        characters is what this costs. The class is what lets `app.tcss` style it
+        differently without a second colour: the palette has to stay legible for
+        someone who cannot rely on hue (roadmap §6.22).
+        """
+        try:
+            tab = self.tabs.query_one(f"#{buffer_id}", Tab)
+        except NoMatches:
+            return
+        number = parent_id.rpartition("-")[2]
+        tab.label = f"\N{RIGHTWARDS ARROW WITH HOOK} {number} {name}"
+        tab.add_class("section-tab")
+        tab.tooltip = f"A section of {self.buffer_names.get(parent_id, parent_id)}"
 
     def refresh_section_view(self, buffer_id: str) -> None:
         """Take a section tab up to date with the script it came from.

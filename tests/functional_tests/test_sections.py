@@ -386,3 +386,28 @@ async def test_a_section_tab_survives_the_script_moving_it(
         await pilot.pause()
         assert app.editor.text.startswith("select -1;\nselect 0;\n-- ## First\n")
         assert "select 1111;" in app.editor.text
+
+
+@pytest.mark.asyncio
+async def test_a_section_tab_says_which_tab_it_is_part_of(
+    app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """It was built exactly like a scratch buffer and looked like one, while leaving it
+    wrote into a script it never named."""
+    from textual.widgets import Tab
+
+    async with app.run_test() as pilot:
+        collection, parent_id, section_id = await _open_first_section(
+            app, pilot, wait_for_workers
+        )
+        tab = collection.tabs.query_one(f"#{section_id}", Tab)
+        label = str(tab.label)
+        assert "First" in label, label
+        assert parent_id.rpartition("-")[2] in label, (label, parent_id)
+        assert tab.has_class("section-tab")
+        assert tab.tooltip and "section of" in tab.tooltip
+
+        # an ordinary tab is left alone
+        parent_tab = collection.tabs.query_one(f"#{parent_id}", Tab)
+        assert not parent_tab.has_class("section-tab")
