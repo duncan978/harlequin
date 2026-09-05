@@ -266,3 +266,123 @@ async def test_closing_a_section_tab_writes_it_back(
         assert collection.active == parent_id
         assert collection.section_views == {}
         assert "select 1111;" in collection.buffer_states[parent_id].text
+
+
+async def _open_first_section(
+    app: Harlequin,
+    pilot,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> tuple[EditorCollection, str, str]:
+    """The `First` section open in its own tab. Returns the collection and both ids."""
+    await _ready(app, pilot, wait_for_workers)
+    app.editor.text = SCRIPT
+    collection = app.query_one(EditorCollection)
+    parent_id = collection.active
+    assert parent_id is not None
+    row = SCRIPT.splitlines().index("select 1;")
+    app.editor.text_input.selection = Selection.cursor((row, 0))
+    collection.action_focus_section()
+    await pilot.pause()
+    await wait_for_workers(app)
+    await pilot.pause()
+    section_id = collection.active
+    assert section_id is not None and section_id != parent_id
+    return collection, parent_id, section_id
+
+
+@pytest.mark.asyncio
+async def test_a_section_tab_takes_up_an_edit_made_in_the_script(
+    app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """The direction that did not work: edit the section in the parent, and the
+    tab shows the edit rather than overwriting it on the way out."""
+    async with app.run_test() as pilot:
+        collection, parent_id, section_id = await _open_first_section(
+            app, pilot, wait_for_workers
+        )
+        assert app.editor.text == "-- ## First\nselect 1;\n"
+
+        # back to the script, and change the section there
+        collection.tabs.active = parent_id
+        await pilot.pause()
+        app.editor.text = SCRIPT.replace("select 1;", "select 111;")
+
+        collection.tabs.active = section_id
+        await pilot.pause()
+        assert app.editor.text == "-- ## First\nselect 111;\n"
+
+        # and leaving again writes nothing back, because nothing was changed here
+        collection.tabs.active = parent_id
+        await pilot.pause()
+        assert "select 111;" in app.editor.text
+        assert "select 1;\n" not in app.editor.text
+
+
+@pytest.mark.asyncio
+async def test_a_section_edited_in_both_tabs_keeps_what_the_tab_has(
+    app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """Nothing may throw away typing: the tab wins and says so.
+
+    Switching tabs reconciles the two every time, so the only way they both hold
+    unsaved changes is a write-back that was *refused* -- the section had gone from
+    the script, the tab kept its text and said so, and later the script grew a
+    section by that name again with different SQL in it.
+    """
+    async with app.run_test() as pilot:
+        collection, parent_id, section_id = await _open_first_section(
+            app, pilot, wait_for_workers
+        )
+
+        # the script loses the section entirely
+        collection.tabs.active = parent_id
+        await pilot.pause()
+        app.editor.text = "select 0;\n-- ## Third\nselect 3;\n"
+
+        # the tab is untouched by that, and says nothing about it yet
+        collection.tabs.active = section_id
+        await pilot.pause()
+        assert app.editor.text == "-- ## First\nselect 1;\n"
+
+        # now edit the tab, and leaving refuses to write it anywhere
+        app.editor.text = "-- ## First\nselect 'from the tab';\n"
+        collection.tabs.active = parent_id
+        await pilot.pause()
+        assert "no longer in the tab it came from" in list(app._notifications)[-1].message
+        assert "from the tab" not in app.editor.text
+
+        # the script grows a `First` again, with different SQL under it
+        app.editor.text = "-- ## First\nselect 'from the script';\n" + app.editor.text
+
+        collection.tabs.active = section_id
+        await pilot.pause()
+        assert app.editor.text == "-- ## First\nselect 'from the tab';\n"
+        assert "both tabs" in list(app._notifications)[-1].message
+
+
+@pytest.mark.asyncio
+async def test_a_section_tab_survives_the_script_moving_it(
+    app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """Text added above the section moves its offsets; the tab follows by name."""
+    async with app.run_test() as pilot:
+        collection, parent_id, section_id = await _open_first_section(
+            app, pilot, wait_for_workers
+        )
+        collection.tabs.active = parent_id
+        await pilot.pause()
+        app.editor.text = "select -1;\n" + SCRIPT
+
+        collection.tabs.active = section_id
+        await pilot.pause()
+        assert app.editor.text == "-- ## First\nselect 1;\n"
+
+        # the tab still knows where it goes home to
+        app.editor.text = "-- ## First\nselect 1111;\n"
+        collection.tabs.active = parent_id
+        await pilot.pause()
+        assert app.editor.text.startswith("select -1;\nselect 0;\n-- ## First\n")
+        assert "select 1111;" in app.editor.text

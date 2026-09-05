@@ -566,6 +566,10 @@ class EditorCollection(Vertical):
         # wrote into it rather than the text from before.
         if leaving is not None:
             self.apply_section_view(leaving)
+        # And the mirror of it: a section tab being opened takes up whatever the
+        # script has said about that section since, so the two tabs agree in both
+        # directions rather than only one.
+        self.refresh_section_view(new_buffer_id)
         self.loaded_buffer_id = new_buffer_id
         state = self.buffer_states.get(new_buffer_id)
         if state is not None:
@@ -834,6 +838,59 @@ class EditorCollection(Vertical):
             original=body,
             name=section.name,
         )
+
+    def refresh_section_view(self, buffer_id: str) -> None:
+        """Take a section tab up to date with the script it came from.
+
+        The write-back was one-way for a while, and one-way was worse than either
+        direction alone: edit the section in the script, open its tab, and the tab
+        showed stale text that overwrote the newer text the moment you left it.
+
+        Three cases, and only the first changes anything. The tab is untouched since
+        it was opened and the parent has moved on -- reload it, which is what the user
+        would have done by hand. Both have been edited -- keep what is in the tab and
+        say so, because the tab is where the user is looking and nothing here may throw
+        away typing. The parent no longer has the section at all -- say nothing now;
+        `apply_section_view` is where that is a problem, and it explains itself there.
+        """
+        view = self.section_views.get(buffer_id)
+        if view is None:
+            return
+        state = self.buffer_states.get(buffer_id)
+        parent = self.buffer_states.get(view.parent_id)
+        if state is None or parent is None:
+            return
+
+        if parent.text[view.span[0] : view.span[1]] == view.original:
+            return  # the parent still holds exactly what this tab was opened with
+        span: tuple[int, int] | None = None
+        for candidate in find_sections(parent.text):
+            if candidate.name == view.name:
+                span = (candidate.start, candidate.end)
+                break
+        if span is None:
+            return
+        current = parent.text[span[0] : span[1]]
+        if current == view.original:
+            # the section itself is unchanged; something above it moved it along
+            view.span = span
+            return
+        if state.text != view.original:
+            self.app.notify(
+                f"'{view.name}' changed in both tabs; this one was kept.",
+                severity="warning",
+                timeout=10,
+            )
+            view.span = span
+            return
+        self.buffer_states[buffer_id] = EditorState(
+            text=current,
+            selection=Selection(),
+            scroll_offset=state.scroll_offset,
+            undo_history=state.undo_history,
+        )
+        view.span = span
+        view.original = current
 
     def apply_section_views(self) -> None:
         """Write every section tab back into its parent."""
