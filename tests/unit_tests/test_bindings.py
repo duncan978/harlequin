@@ -178,3 +178,32 @@ def test_a_keymap_from_config_may_set_show() -> None:
     )
     assert keymap.bindings[0].show is None
     assert keymap.bindings[1].show is False
+
+
+def test_every_alt_chord_bound_to_an_app_action_has_priority() -> None:
+    """An `alt` chord that is not `priority` is a key that mostly does nothing.
+
+    A focused `TextArea` inserts any key carrying a printable character, and a
+    terminal's alt+i carries an "i". Textual checks the focused widget's bindings
+    before a non-priority `App` binding, so the editor -- which is what has focus
+    almost all the time -- swallows the chord and types the letter instead.
+
+    `open_watched` shipped without it in +insurify.18 and alt+i typed an "i" into
+    the buffer, which is what this test exists to stop happening a third time
+    (`launch_external_editor` was the first).
+    """
+    from harlequin.actions import HARLEQUIN_ACTIONS
+
+    offenders = []
+    for binding in VSCODE.bindings:
+        if not any(k.strip().startswith("alt+") for k in binding.keys.split(",")):
+            continue
+        action = HARLEQUIN_ACTIONS.get(binding.action)
+        if action is None or action.target is not None:
+            continue
+        if not action.priority:
+            offenders.append(f"{binding.keys} -> {binding.action}")
+    assert not offenders, (
+        "app-level alt bindings without priority=True; a focused editor will "
+        f"swallow these and insert the letter: {offenders}"
+    )

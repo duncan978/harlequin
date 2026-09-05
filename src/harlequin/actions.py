@@ -102,8 +102,14 @@ HARLEQUIN_ACTIONS = {
     # A directory another program drops queries and results into (harlequin.watch).
     # Not in the footer: it does nothing at all without `--watch-dir`, and a footer
     # slot is the scarcest thing on a half-screen pane.
+    # priority, for the reason `launch_external_editor` has it: the editor is what
+    # is focused when a query arrives, and a focused `TextArea` inserts any key
+    # carrying a printable character -- a terminal's alt+i carries an "i".
     "open_watched": Action(
-        target=None, action="open_watched", description="Open Watched Files"
+        target=None,
+        action="open_watched",
+        description="Open Watched Files",
+        priority=True,
     ),
     "cancel_query": Action(
         target=None, action="cancel_query", description="Cancel Query"
