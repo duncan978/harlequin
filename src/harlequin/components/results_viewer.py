@@ -332,10 +332,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
             self.notify(f"Unpinned {pane_id.replace('-', ' ').title()}.")
         else:
             self._pinned.add(pane_id)
-            self.notify(
-                f"Pinned {pane_id.replace('-', ' ').title()}. "
-                "The next query opens a new tab beside it."
-            )
+            self.notify(f"Pinned {pane_id.replace('-', ' ').title()}.")
         self._relabel_tab(pane_id)
         self._sync_tab_visibility()
 
@@ -388,12 +385,14 @@ class ResultsViewer(TabbedContent, can_focus=True):
         self.announce_columns()
 
     def _relabel_tab(self, pane_id: str) -> None:
-        """A tab says which result it is; a pinned one says which query it was.
+        """A tab says which result it is; its tooltip says which query it was.
 
-        Unpinned tabs keep the bare `Result n`, which is all there is to say
-        about a pane that will not survive the next run. A pin is a decision to
-        compare, and comparing needs the queries told apart, so a pinned tab
-        wears its SQL.
+        Every tab keeps the number it was given, pinned or not, because the
+        number is the one thing about a result that is short, stable and
+        unambiguous. A tab wore its SQL for a while and that was worse: ad hoc
+        queries start with the same twenty characters (`select * from
+        insurify.…`), so a row of them was a row of identical labels. The SQL
+        is still one hover away, and `ctrl+t` names the tabs worth a name.
         """
         try:
             tab = self.get_tab(pane_id)
@@ -401,20 +400,9 @@ class ResultsViewer(TabbedContent, can_focus=True):
             return
         n = pane_id.rpartition("-")[2]
         name = self._names.get(pane_id)
-        if name is not None:
-            body = name
-        elif pane_id in self._pinned:
-            body = self._sql_snippet(pane_id)
-        else:
-            body = f"Result {n}"
+        body = name if name is not None else f"Result {n}"
         tab.label = f"\N{PUSHPIN} {body}" if pane_id in self._pinned else body
-
-    def _sql_snippet(self, pane_id: str) -> str:
-        sql = self._sql_by_pane.get(pane_id, "")
-        collapsed = " ".join(sql.split())
-        if not collapsed:
-            return f"Result {pane_id.rpartition('-')[2]}"
-        return collapsed if len(collapsed) <= 28 else f"{collapsed[:27]}…"
+        tab.tooltip = self._sql_by_pane.get(pane_id, "").strip() or None
 
     def _sync_tab_visibility(self) -> None:
         """Hide the tab bar only when there is nothing a tab could tell you."""
