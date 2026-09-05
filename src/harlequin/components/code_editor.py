@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import List, Union
 
+from rich.style import Style
 from sqlfmt.api import Mode, format_string
 from sqlfmt.exception import SqlfmtError
 from textual import on, work
 from textual.app import ComposeResult
+from textual.color import Color
 from textual.containers import Vertical
 from textual.geometry import Offset
 from textual.message import Message
@@ -375,6 +377,75 @@ class CodeEditor(TextEditor, inherit_bindings=False):
         if hasattr(self.app, "action_focus_data_catalog"):
             self.app.action_focus_data_catalog()
 
+
+    def watch_theme(self, theme: str) -> None:
+        """Register the computed syntax theme, then make its two dimmest styles legible.
+
+        `textual_textarea` builds a syntax theme for any app theme it does not know by
+        blending foreground into background at 50% for comments, and leaves the gutter
+        to whatever Textual derives. Measured on this workbench's palette against its
+        own background: comments land at 4.70:1 and the line numbers at 3.42:1, the
+        latter under the 4.5:1 that ordinary text is expected to clear.
+
+        The theme already carries a colour for exactly this job -- `$text-muted`, which
+        is 5.66:1 here -- and the blend ignores it. So: let the package compute the
+        theme, then put that colour on the styles whose whole purpose is to be quiet
+        without being unreadable. Nothing else is touched, and a theme that ships its
+        own syntax styles (every built-in) never reaches this path.
+
+        It matters more here than it would elsewhere because a section heading is a SQL
+        comment (`-- ## Name`): without this, the most structural text in a long script
+        is the least readable text on the screen.
+        """
+        super().watch_theme(theme)
+        if not self.text_input.is_mounted:
+            return
+        muted = self._muted_colour()
+        if muted is None:
+            return
+        # `available_themes` is a set of names; `_themes` is where a registered theme
+        # object actually lives. A built-in theme is not in there and is left alone --
+        # it shipped with syntax styles of its own and never went through the blend.
+        registered = self.text_input._themes.get(theme)
+        if registered is None:
+            return
+        corrected = replace(
+            registered,
+            gutter_style=Style(color=muted),
+            syntax_styles={
+                **registered.syntax_styles,
+                "comment": muted,
+                "string.documentation": muted,
+            },
+        )
+        self.text_input.register_theme(corrected)
+        self.text_input.theme = theme
+
+    def _muted_colour(self) -> str | None:
+        """A real colour for text that should be quiet but readable.
+
+        `$text-muted` is the right token and is not always a colour: a theme may leave
+        it as one of Textual's `auto NN%` tokens, which resolves against whatever it is
+        drawn on and which Rich cannot parse. When that happens, blend the theme's own
+        foreground into its background far enough to clear 4.5:1 -- the package blends
+        half way, which is what put the line numbers at 3.42:1 to begin with.
+        """
+        variables = self.app.get_css_variables()
+        muted = variables.get("text-muted")
+        if muted:
+            try:
+                return Color.parse(muted).hex
+            except Exception:
+                pass  # an `auto NN%` token, or anything else Rich cannot read
+        try:
+            background = Color.parse(variables["background"])
+            foreground = Color.parse(variables["foreground"])
+        except Exception:
+            return None
+        # 0.65 rather than the package's 0.5: measured on this workbench's palette, half
+        # way is 4.70:1 for comments and 3.42:1 for the gutter, and two thirds clears
+        # 4.5:1 on both the light and the dark themes shipped here.
+        return background.blend(foreground, factor=0.65).hex
 
 class EditorCollection(Vertical):
     """
