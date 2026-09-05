@@ -1,7 +1,7 @@
 [project]
 
 name = "harlequin"
-version = "2.13.0+insurify.16"
+version = "2.13.0+insurify.17"
 requires-python = ">=3.10"
 description = "The SQL IDE for Your Terminal."
 authors = [
