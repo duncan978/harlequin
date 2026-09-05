@@ -337,6 +337,30 @@ async def test_a_saved_buffer_reports_its_path(
 
 
 @pytest.mark.asyncio
+async def test_an_opened_path_is_recorded_absolute(
+    command_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A file opened as `notes.sql` is relative to Harlequin's working directory, and a
+    # bare name means nothing to whatever the path is handed to next -- which may be a
+    # program run from anywhere. HARLEQUIN_BUFFER_PATH has to be absolute.
+    target = tmp_path / "notes.sql"
+    target.write_text("select 1;\n")
+    monkeypatch.chdir(tmp_path)
+    app = command_app
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        app.editor._remember_path(Path("notes.sql"))
+        recorded = app.editor_collection.active_buffer_path()
+        assert recorded is not None
+        assert recorded.is_absolute(), recorded
+        assert recorded.name == "notes.sql"
+        assert recorded.is_file()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "command_app",
     [

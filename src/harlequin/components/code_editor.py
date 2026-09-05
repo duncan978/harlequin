@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Union
@@ -276,7 +277,19 @@ class CodeEditor(TextEditor, inherit_bindings=False):
         The collection owns the mapping because it owns the buffers: this widget is one
         editor that every tab's state is swapped through, so a path kept here would
         follow the user from one buffer to the next.
+
+        Resolved to an absolute path first. A file opened as `notes.sql` is a file
+        opened relative to Harlequin's working directory, and a bare name only means
+        anything to a process that happens to share it -- whereas whatever this is
+        handed to (a configured command, and whoever reads what that command wrote) may
+        be anywhere. `resolve()` where the file exists, absolute-from-cwd where it
+        somehow does not, and never an exception: a path that cannot be resolved is
+        still better recorded as typed than dropped.
         """
+        try:
+            path = path.resolve()
+        except OSError:
+            path = Path(os.path.abspath(str(path)))
         collection = self.parent
         if isinstance(collection, EditorCollection):
             collection.remember_buffer_path(path)
