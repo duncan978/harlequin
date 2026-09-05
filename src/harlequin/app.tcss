@@ -1,6 +1,11 @@
 /* VARIABLES */
 $border-color-nofocus: $panel;
-$border-title-color-nofocus: $panel;
+/* The title is the panel's NAME -- "Query Editor", "Query Results" -- and a name you
+   cannot read is a panel you cannot identify. $panel is chrome-coloured by design and
+   measures 1.24:1 against the background on this workbench's palette, 2.62:1 on
+   Harlequin's own and 1.17:1 on textual-light: invisible in all three. The border LINE
+   stays $panel, because quiet chrome is the point of a line; the text does not. */
+$border-title-color-nofocus: $text-muted;
 $border-color-focus: $primary;
 $border-title-color-focus: $primary;
 
