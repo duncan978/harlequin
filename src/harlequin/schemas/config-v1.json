@@ -344,6 +344,9 @@
         },
         "keys": {
           "type": "string"
+        },
+        "show": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -409,6 +412,36 @@
           "default": 120.0
         },
         "max_rows": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "fallback_stdin": {
+          "anyOf": [
+            {
+              "enum": [
+                "buffer",
+                "none",
+                "pinned_results",
+                "results",
+                "section",
+                "selection",
+                "statement"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "order": {
           "anyOf": [
             {
               "type": "integer"

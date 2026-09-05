@@ -21,6 +21,8 @@ from harlequin.commands import (
     results_manifest,
     run_command,
 )
+from harlequin.components.command_menu import CommandList
+from harlequin.config import CommandConfig
 
 
 def child(source: str) -> list[str]:
@@ -212,3 +214,55 @@ def test_every_pinned_table_is_in_one_manifest(tmp_path: Path) -> None:
 
 def test_command_result_first_line_skips_blank_lines() -> None:
     assert CommandResult(0, "\n\n  Queued 7  \n", "").first_line == "Queued 7"
+
+
+# --- what a command table may say, and what the menu does with it ------------
+
+
+def command(**kwargs: object) -> CommandConfig:
+    import msgspec
+
+    return msgspec.convert({"command": ["x"], **kwargs}, CommandConfig)
+
+
+def test_a_command_may_name_a_fallback_and_a_place_in_the_menu() -> None:
+    c = command(stdin="results", fallback_stdin="statement", order=0)
+    assert c.stdin == "results"
+    assert c.fallback_stdin == "statement"
+    assert c.order == 0
+
+
+def test_a_command_says_nothing_about_order_or_fallback_by_default() -> None:
+    c = command()
+    assert c.order is None
+    assert c.fallback_stdin is None, "a command falls back only when it asks to"
+
+
+def test_a_fallback_must_be_a_source_that_exists() -> None:
+    import msgspec
+
+    with pytest.raises(msgspec.ValidationError):
+        command(fallback_stdin="the_clipboard")
+
+
+def test_the_menu_leads_with_the_ordered_commands_then_the_rest() -> None:
+    """`order` first, then the label the user reads; unset sorts last so adding
+    `order` to one entry does not re-shuffle the others."""
+    commands = {
+        "zulu": command(description="Zulu", order=0),
+        "alpha": command(description="Alpha", order=0),
+        "no_order": command(description="Aardvark"),
+        "later": command(description="Later", order=5),
+    }
+    ranked = sorted(
+        commands, key=lambda name: CommandList._rank(commands[name], name)
+    )
+    assert ranked == ["alpha", "zulu", "later", "no_order"]
+
+
+def test_a_command_with_no_description_is_ranked_by_its_name() -> None:
+    commands = {"b_named": command(order=0), "a_named": command(order=0)}
+    ranked = sorted(
+        commands, key=lambda name: CommandList._rank(commands[name], name)
+    )
+    assert ranked == ["a_named", "b_named"]

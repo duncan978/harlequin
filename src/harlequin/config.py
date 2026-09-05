@@ -272,6 +272,34 @@ class CommandConfig(msgspec.Struct, forbid_unknown_fields=True):
     timeout: float = 120.0
     max_rows: Optional[int] = None
     """A cap on the rows handed over, for the two result sources only."""
+    fallback_stdin: Optional[
+        Literal[
+            "none",
+            "selection",
+            "statement",
+            "section",
+            "buffer",
+            "results",
+            "pinned_results",
+        ]
+    ] = None
+    """What to send when `stdin` has nothing to give.
+
+    A command that sends the visible result is the one a user reaches for, and before
+    the first run of the day there is no visible result -- which used to be a warning
+    and nothing sent. `fallback_stdin = "statement"` makes that command send the query
+    instead, so one key is right whether or not anything has run. The child is told
+    which it got: `HARLEQUIN_STDIN` names the source that actually produced the bytes.
+    """
+    order: Optional[int] = None
+    """Where the command sits in the menu; lower first, ties alphabetical by label.
+
+    A menu that lists every command alphabetically says they are all equally likely,
+    and they are not: a table of commands usually has one or two a user runs constantly
+    and a tail they run twice a year. Commands with different `order` values are
+    separated by a rule in the menu, so the common ones lead and the tail is visibly
+    the tail. Unset sorts last, with the other unset ones.
+    """
 
     def argv(self) -> list[str]:
         """The command as argv, split under the platform's rules if it is a string."""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Mapping
 
 from rich.text import Text
@@ -14,6 +15,9 @@ from textual.widgets.option_list import Option
 
 from harlequin.components.text_modal import VerticalSuppressClicks
 from harlequin.config import CommandConfig
+
+RULE = Text("─" * 40, style="dim")
+"""What separates two `order` groups. Disabled, so the cursor passes over it."""
 
 
 class CommandList(Vertical, can_focus=True):
@@ -47,13 +51,28 @@ class CommandList(Vertical, can_focus=True):
         classes: str | None = None,
     ) -> None:
         super().__init__(name=name, id=id, classes=classes)
-        self.names = sorted(commands)
         self.commands = commands
+        self.names = sorted(commands, key=lambda name: self._rank(commands[name], name))
         self.keys = dict(keys or {})
         self.footer_text = footer
-        # what the list is showing, as indexes into `self.names`
-        self.visible_indexes: list[int] = list(range(len(self.names)))
+        # What the list is showing, one entry per row: an index into `self.names`, or
+        # None for a rule between two `order` groups. Rows and names are not the same
+        # list once a rule is in it, which is why picking goes through this.
+        self.rows: list[int | None] = list(range(len(self.names)))
         self._filter_text = ""
+
+    @staticmethod
+    def _rank(command: CommandConfig, name: str) -> tuple[int, str]:
+        """Sort key: `order` first, then the label the user reads.
+
+        A command with no `order` sorts after every command that has one, so adding
+        `order` to one entry in a table does not silently re-shuffle the rest.
+        """
+        order = command.order
+        return (
+            order if order is not None else sys.maxsize,
+            (command.description or name).lower(),
+        )
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Filter commands…", classes="column_filter")
@@ -92,29 +111,45 @@ class CommandList(Vertical, can_focus=True):
 
     def action_pick(self) -> None:
         highlighted = self.option_list.highlighted
-        if highlighted is None or highlighted >= len(self.visible_indexes):
+        if highlighted is None or highlighted >= len(self.rows):
             return
-        self.post_message(
-            self.CommandPicked(self.names[self.visible_indexes[highlighted]])
-        )
+        row = self.rows[highlighted]
+        if row is None:  # a rule; the cursor does not stop on one, but be sure
+            return
+        self.post_message(self.CommandPicked(self.names[row]))
 
     def _populate(self, filter_text: str) -> None:
         self._filter_text = filter_text
         needle = filter_text.strip().lower()
-        self.visible_indexes = [
+        matched = [
             i
             for i, name in enumerate(self.names)
             if not needle
             or needle in name.lower()
             or needle in (self.commands[name].description or "").lower()
         ]
+        # A rule wherever the `order` group changes, so the common commands read as a
+        # short list with a tail below rather than as seven equal things.
+        self.rows = []
+        previous: int | None = None
+        for position, i in enumerate(matched):
+            order = self.commands[self.names[i]].order
+            if position and order != previous:
+                self.rows.append(None)
+            self.rows.append(i)
+            previous = order
         self.option_list.clear_options()
         self.option_list.add_options(
-            [Option(self._format(i)) for i in self.visible_indexes]
+            [
+                Option(RULE, disabled=True)
+                if row is None
+                else Option(self._format(row))
+                for row in self.rows
+            ]
         )
-        if self.visible_indexes:
-            self.option_list.highlighted = 0
-        self._set_title(matched=len(self.visible_indexes))
+        if matched:
+            self.option_list.action_first()
+        self._set_title(matched=len(matched))
 
     def _format(self, index: int) -> Text:
         name = self.names[index]

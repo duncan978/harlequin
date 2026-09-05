@@ -291,7 +291,7 @@ async def test_the_menu_lists_filters_and_runs(
         assert listing.keys["send"] == "⌥s", "the menu shows the key it is also on"
         await pilot.press("z")  # matches nothing
         await pilot.pause()
-        assert listing.visible_indexes == []
+        assert listing.rows == []
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, CommandMenu)
@@ -424,3 +424,104 @@ async def test_a_command_running_a_different_program_still_asks(
         assert isinstance(app.screen, ConfirmModal), (
             "a program you have not approved stops and asks -- that is the whole gate"
         )
+
+
+# --- falling back when the first source has nothing --------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_app",
+    [
+        {
+            "send": command(
+                SAY_ENV,
+                stdin="results",
+                fallback_stdin="statement",
+                output="replace",
+            )
+        }
+    ],
+    indirect=True,
+)
+async def test_a_command_falls_back_when_nothing_has_run_yet(
+    command_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    """One key for "this query and its result" has to work before the day's first
+    query, or it is a key with a wrong day."""
+    app = command_app
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        app.editor.text = "select 1;"
+        await _run(app, pilot)
+        _name, stdin_source, *_rest = app.editor.text.split("|")
+        assert stdin_source == "statement", "the child is told what it actually got"
+        assert not [
+            n for n in app._notifications if "Run a query first" in n.message
+        ], "a command that recovered must not warn about what it recovered from"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_app",
+    [
+        {
+            "send": command(
+                ECHO_STDIN,
+                stdin="selection",
+                fallback_stdin="statement",
+                output="none",
+            )
+        }
+    ],
+    indirect=True,
+)
+async def test_a_fallback_that_is_also_empty_is_the_one_that_complains(
+    command_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    app = command_app
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        app.editor.text = ""
+        await pilot.press("alt+s")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmModal), "nothing to consent to"
+        assert not [w for w in app.workers if w.group == "external_commands"]
+        assert "buffer is empty" in list(app._notifications)[-1].message, (
+            "the last source tried is the one that says why"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_app",
+    [
+        {
+            "aardvark": command(ECHO_STDIN, description="Aardvark"),
+            "common": command(ECHO_STDIN, description="Send this one", order=0),
+            "rare": command(ECHO_STDIN, description="Rare", order=5),
+        }
+    ],
+    indirect=True,
+)
+async def test_the_menu_leads_with_the_ordered_commands_and_rules_between_groups(
+    command_app: Harlequin,
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+) -> None:
+    app = command_app
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("alt+c")
+        await pilot.pause()
+        assert isinstance(app.screen, CommandMenu)
+        command_list = app.screen.query_one(CommandList)
+        assert command_list.names == ["common", "rare", "aardvark"]
+        # a rule between each `order` group, and none at either end
+        assert command_list.rows == [0, None, 1, None, 2]
+        # the cursor lands on the first real command, not on a rule
+        assert command_list.option_list.highlighted == 0
+        await pilot.press("down")
+        await pilot.pause()
+        assert command_list.option_list.highlighted == 2, "a rule is passed over"

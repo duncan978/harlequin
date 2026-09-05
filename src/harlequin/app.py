@@ -1814,31 +1814,49 @@ class Harlequin(AppBase):
         stdin_bytes = b""
         tmpdir: str | None = None
         files: list[str] = []
-        source = command.stdin
 
-        if source in ("results", "pinned_results"):
-            snapshots = self._result_snapshots(source)
-            if not snapshots:
-                self.notify(
-                    "Run a query first."
-                    if source == "results"
-                    else "No results are pinned.",
-                    severity="warning",
+        # A command may name a second source for when the first has nothing. The
+        # earlier attempts stay quiet, so a command that recovers does not warn about
+        # what it recovered from; only the last one tried says why it failed.
+        sources = [command.stdin]
+        if command.fallback_stdin and command.fallback_stdin != command.stdin:
+            sources.append(command.fallback_stdin)
+        source = sources[-1]
+        for attempt, candidate in enumerate(sources):
+            last = attempt == len(sources) - 1
+            if candidate == "none":
+                source = candidate
+                break
+            if candidate in ("results", "pinned_results"):
+                snapshots = self._result_snapshots(candidate)
+                if not snapshots:
+                    if last:
+                        self.notify(
+                            "Run a query first."
+                            if candidate == "results"
+                            else "No results are pinned.",
+                            severity="warning",
+                        )
+                        return None
+                    continue
+                tmpdir = tempfile.mkdtemp(prefix="harlequin-cmd-")
+                stdin_text, files = results_manifest(
+                    snapshots,
+                    stdin_source=candidate,
+                    tmpdir=Path(tmpdir),
+                    max_rows=command.max_rows,
                 )
-                return None
-            tmpdir = tempfile.mkdtemp(prefix="harlequin-cmd-")
-            stdin_text, files = results_manifest(
-                snapshots,
-                stdin_source=source,
-                tmpdir=Path(tmpdir),
-                max_rows=command.max_rows,
-            )
-            stdin_bytes = stdin_text.encode("utf-8")
-        elif source != "none":
-            text = self._editor_context(source)
+                stdin_bytes = stdin_text.encode("utf-8")
+                source = candidate
+                break
+            text = self._editor_context(candidate, quiet=not last)
             if text is None:
-                return None
+                if last:
+                    return None
+                continue
             stdin_bytes = text.encode("utf-8")
+            source = candidate
+            break
 
         argv = command.argv()
         if not argv:
@@ -1866,44 +1884,51 @@ class Harlequin(AppBase):
             files=files,
         )
 
-    def _editor_context(self, source: str) -> str | None:
+    def _editor_context(self, source: str, quiet: bool = False) -> str | None:
         """The text a `stdin` source asks for, or None with a notification.
 
         `statement` is what Run would run, `section` is what Run Section would run, and
         both come from the same code those actions use -- a second definition of "the
         statement under the cursor" would sooner or later disagree with the one that
         executes.
+
+        `quiet` is for a source tried before a fallback: nothing is wrong yet, so
+        nothing is said yet.
         """
+
+        def warn(message: str) -> None:
+            if not quiet:
+                self.notify(message, severity="warning")
+
         editor = self.editor_collection.current_editor
         if source == "selection":
             text = editor.selected_text
             if not text.strip():
-                self.notify("Nothing is selected.", severity="warning")
+                warn("Nothing is selected.")
                 return None
             return text
         if source == "buffer":
             if not editor.text.strip():
-                self.notify("The buffer is empty.", severity="warning")
+                warn("The buffer is empty.")
                 return None
             return editor.text
         if source == "statement":
             queries = editor.selected_queries()
             if not queries:
-                self.notify("The buffer is empty.", severity="warning")
+                warn("The buffer is empty.")
                 return None
             return ";\n".join(query.rstrip().rstrip(";") for query in queries) + ";\n"
         if source == "section":
             section = self.editor_collection.section_under_cursor()
             if section is None:
-                self.notify(
+                warn(
                     "The cursor is not in a section. Start a line with `-- ## Name` "
-                    "to make one.",
-                    severity="warning",
+                    "to make one."
                 )
                 return None
             text, _name = section
             if not text.strip():
-                self.notify("That section has no SQL under it.", severity="warning")
+                warn("That section has no SQL under it.")
                 return None
             return text
         return None
