@@ -138,6 +138,7 @@ TUI_ONLY_KEYS = (
     "catalog_side",
     "catalog_min_width",
     "catalog_exclude",
+    "watch_dir",
 )
 """Profile keys the IDE reads and a headless caller must drop.
 

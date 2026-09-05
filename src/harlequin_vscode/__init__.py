@@ -11,6 +11,11 @@ VSCODE_APP_BINDINGS = [
     HarlequinKeyBinding("f7", "toggle_catalog_side"),
     HarlequinKeyBinding("f10", "toggle_full_screen"),
     HarlequinKeyBinding("f12", "show_debug_info"),
+    # ctrl+i is NOT available for this: ctrl+i *is* Tab (0x09) and no terminal can
+    # tell them apart, so binding it would cost tab navigation in the editor. Same
+    # two-spelling treatment as the section keys below -- a CSI-u chord and one a
+    # terminal cannot lose.
+    HarlequinKeyBinding("ctrl+shift+i,alt+i", "open_watched"),
     HarlequinKeyBinding("ctrl+e", "show_data_exporter"),
     HarlequinKeyBinding("ctrl+r", "refresh_catalog"),
     HarlequinKeyBinding("tab", "focus_next"),

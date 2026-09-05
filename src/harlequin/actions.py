@@ -99,6 +99,12 @@ HARLEQUIN_ACTIONS = {
         target=None, action="refresh_catalog", description="Refresh Data Catalog"
     ),
     "run_query": Action(target=None, action="run_query", description="Run Query"),
+    # A directory another program drops queries and results into (harlequin.watch).
+    # Not in the footer: it does nothing at all without `--watch-dir`, and a footer
+    # slot is the scarcest thing on a half-screen pane.
+    "open_watched": Action(
+        target=None, action="open_watched", description="Open Watched Files"
+    ),
     "cancel_query": Action(
         target=None, action="cancel_query", description="Cancel Query"
     ),

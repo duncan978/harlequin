@@ -534,6 +534,17 @@ def build_cli(argv: Sequence[str]) -> click.Command:
         ),
     )
     @click.option(
+        "--watch-dir",
+        type=click.Path(file_okay=False, path_type=Path),
+        help=(
+            "A directory to poll for `*.sql` and `*.csv` files another program drops "
+            "there, paired by name. Nothing opens on its own: Harlequin says how many "
+            "are waiting and the `open_watched` key (alt+i) opens them -- the SQL as a "
+            "buffer, the CSV as a pinned result tab. An opened file moves to "
+            "<DIR>/opened/."
+        ),
+    )
+    @click.option(
         "--catalog-exclude",
         multiple=True,
         help=(
@@ -685,6 +696,7 @@ def build_cli(argv: Sequence[str]) -> click.Command:
         show_s3: str | None = config.pop("show_s3", None)
         catalog_side: str = config.pop("catalog_side", None) or "left"
         catalog_exclude = config.pop("catalog_exclude", None) or ()
+        watch_dir = config.pop("watch_dir", None)
         catalog_min_width = config.pop("catalog_min_width", None)
         if catalog_min_width is None:
             catalog_min_width = DEFAULT_CATALOG_MIN_WIDTH
@@ -756,6 +768,7 @@ def build_cli(argv: Sequence[str]) -> click.Command:
                 catalog_side=catalog_side,
                 catalog_min_width=catalog_min_width,
                 catalog_exclude=catalog_exclude,
+                watch_dir=watch_dir,
                 export_path=export_path,
                 ssh_tunnel=tunnel,
                 commands=commands,

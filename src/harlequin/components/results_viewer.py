@@ -197,6 +197,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
         """
         self._names: dict[str, str] = {}
         self._activate_next_push = False
+        self._last_pushed: str | None = None
         super().__init__()
 
     def on_mount(self) -> None:
@@ -320,6 +321,7 @@ class ResultsViewer(TabbedContent, can_focus=True):
         self._next_tab_number += 1
         n = self._next_tab_number
         pane_id = f"result-{n}"
+        self._last_pushed = pane_id
         self._sql_by_pane[pane_id] = result.statement.sql
         self._arrived_by_pane[pane_id] = monotonic()
         if elapsed is not None:
@@ -336,6 +338,35 @@ class ResultsViewer(TabbedContent, can_focus=True):
         table.refresh(repaint=True, layout=True)
         self.announce_columns()
         return table
+
+    @property
+    def last_pushed(self) -> str | None:
+        """The tab the most recent `push_table` made, for a caller that has to name it.
+
+        `push_table` returns the table, not the tab it went into, and every caller
+        until now only wanted the table. Rather than change what it returns, the pane
+        id it chose is kept here for the one caller that has to come back and label
+        what it pushed.
+        """
+        return self._last_pushed
+
+    def adopt_table(
+        self, pane_id: str, name: str | None = None, pin: bool = False
+    ) -> None:
+        """Name a result tab, and keep it, without going through the modals.
+
+        `action_rename_tab` and `action_toggle_pin` are what a person presses; this is
+        the same two effects for a result that arrived already knowing what it is
+        called and that it is worth keeping.
+        """
+        if pane_id not in [pane.id for pane in self.query(TabPane)]:
+            return
+        if name:
+            self._names[pane_id] = name
+        if pin:
+            self._pinned.add(pane_id)
+        self._relabel_tab(pane_id)
+        self._sync_tab_visibility()
 
     def action_toggle_pin(self) -> None:
         """Keep the visible result across the next run, or stop keeping it."""

@@ -32,6 +32,7 @@ from textual.timer import Timer
 from textual.types import CSSPathType
 from textual.widget import AwaitMount, Widget
 from textual.widgets import Button, Footer, Input, TextArea
+from textual.widgets.text_area import Selection
 from textual.worker import Worker, WorkerState
 from textual_fastdatatable import DataTable
 from textual_fastdatatable.backend import ArrowBackend
@@ -89,7 +90,7 @@ from harlequin.config import (
 )
 from harlequin.copy_formats import HARLEQUIN_COPY_FORMATS, WINDOWS_COPY_FORMATS
 from harlequin.driver import HarlequinDriver
-from harlequin.editor_cache import Cache
+from harlequin.editor_cache import BufferState, Cache
 from harlequin.editor_cache import write_cache as write_editor_cache
 from harlequin.exception import (
     HarlequinBindingError,
@@ -106,6 +107,7 @@ from harlequin.plugins import load_keymap_plugins
 from harlequin.query import ExecutedStatement, ResultSet, RowLimit, execute, fetch
 from harlequin.statements import Statement
 from harlequin.transaction_mode import HarlequinTransactionMode
+from harlequin.watch import claim, result_set_from_csv, scan
 
 if TYPE_CHECKING:
     from textual.await_complete import AwaitComplete
@@ -245,6 +247,10 @@ so their errors surface as a notification rather than an error modal.
 """
 
 
+WATCH_POLL_SECONDS = 2.0
+"""How often a `--watch-dir` is looked at. A poll nobody is waiting on."""
+
+
 def _harlequin_version() -> str:
     """What `HARLEQUIN_VERSION` tells a command it is talking to.
 
@@ -307,6 +313,7 @@ class Harlequin(AppBase):
         catalog_side: str = "left",
         catalog_min_width: int | str | None = None,
         catalog_exclude: Sequence[str] | str | None = None,
+        watch_dir: Path | str | None = None,
         export_path: Path | str | None = None,
         viewer_max_rows: int | str | None = 100_000,
         query_limit: int | str | None = None,
@@ -347,6 +354,15 @@ class Harlequin(AppBase):
             self.catalog_exclude = (catalog_exclude,)
         else:
             self.catalog_exclude = tuple(str(pattern) for pattern in catalog_exclude)
+        # A directory another program drops `*.sql` and `*.csv` into (harlequin.watch).
+        # Polled, not watched with an OS event: a poll is a dozen lines that behave the
+        # same on every platform and over a network mount, and two seconds is not a
+        # latency anyone is waiting on.
+        self.watch_dir = Path(watch_dir).expanduser() if watch_dir else None
+        self._watched_names: set[str] = set()
+        """Names already announced, so a poll does not re-announce what is waiting."""
+        self._watched_tables = 0
+        """Counts the result tabs a watched CSV has made, for their DOM ids."""
         # under this many columns the catalog is an overlay (see `narrow`). 0 or
         # None keeps the column at every width, which is also what tests and other
         # library callers get by default; the CLI supplies its own default.
@@ -569,6 +585,9 @@ class Harlequin(AppBase):
         self._connect()
         self._load_catalog_cache()
         self.action_bind_keymaps(*self.keymap_names)
+        if self.watch_dir is not None:
+            self.set_interval(WATCH_POLL_SECONDS, self._poll_watch_dir)
+            self._poll_watch_dir()
 
     @on(Button.Pressed, "#run_query")
     def submit_query_from_run_query_bar(self, message: Button.Pressed) -> None:
@@ -2407,3 +2426,109 @@ class Harlequin(AppBase):
             # for some reason this doesn't exit right away...
             keymap = None
         return keymap
+
+    # --- a watched directory (harlequin.watch) ------------------------------------
+    def _key_for_action(self, action: str) -> str | None:
+        """Which key an action is on, in the keymaps in force.
+
+        Read off the keymaps rather than remembered when they were bound, for the
+        same reason `_command_keys` is: a message that names a key is wrong the
+        moment somebody rebinds it, and this is the only description of the keys
+        that cannot fall out of step with them. The last spelling of a multi-key
+        binding wins -- `ctrl+shift+i,alt+i` is one CSI-u spelling and one a
+        terminal cannot lose, and the second is the one to tell a user to press.
+        """
+        for keymap_name in self.keymap_names:
+            keymap = self._get_keymap(keymap_name=keymap_name)
+            if keymap is None:
+                continue
+            for binding in keymap.bindings:
+                if binding.action == action:
+                    return binding.key_display or binding.keys.split(",")[-1].strip()
+        return None
+
+    def _poll_watch_dir(self) -> None:
+        """Say when something new is waiting, and never do more than say it.
+
+        A directory another process writes to is not allowed to change what is on
+        screen: it gets a notification, and the user decides. Announced names are
+        remembered so a poll every two seconds is not a toast every two seconds; a
+        name that leaves the directory is forgotten, so the same query dropped
+        again is news again.
+        """
+        if self.watch_dir is None:
+            return
+        items = scan(self.watch_dir)
+        names = {item.name for item in items}
+        arrived = names - self._watched_names
+        self._watched_names = names
+        if not arrived:
+            return
+        key = self._key_for_action("open_watched")
+        self.notify(
+            "%d waiting%s" % (len(items), " · %s" % key if key else ""),
+            title="Watched directory",
+            markup=False,
+        )
+
+    def action_open_watched(self) -> None:
+        """Open everything the watched directory is holding."""
+        if self.watch_dir is None:
+            self.notify("No --watch-dir is set.", severity="warning")
+            return
+        items = scan(self.watch_dir)
+        if not items:
+            self.notify("Nothing waiting.")
+            return
+        self.run_worker(self._open_watched(items), exclusive=False)
+
+    async def _open_watched(self, items: list) -> None:
+        """One item at a time: the rows first, then the SQL that produced them.
+
+        The rows go in before the query so that focus ends on the editor, which is
+        where a person types next. A CSV that pyarrow cannot read costs its own
+        error and nothing else -- the query beside it still opens, because a broken
+        file is a poor reason to lose the SQL that came with it.
+
+        Each file is *claimed* (moved to `opened/`) before it is read, so a failure
+        cannot leave the same file to be offered again on every poll: it is in
+        `opened/`, under its own name, and the error says which one it was.
+        """
+        for item in items:
+            self._watched_names.discard(item.name)
+            if item.csv is not None:
+                path = claim(item.csv, self.watch_dir)
+                try:
+                    result = result_set_from_csv(path, max_rows=self.viewer_max_rows)
+                except Exception as e:  # noqa: BLE001 -- pyarrow raises many things
+                    self.notify(
+                        "Could not read %s: %s" % (path.name, e), severity="error"
+                    )
+                    result = None
+                if result is not None:
+                    self._watched_tables += 1
+                    await self.results_viewer.push_table(
+                        table_id="watched-%d" % self._watched_tables, result=result
+                    )
+                    pane_id = self.results_viewer.last_pushed
+                    if pane_id is not None:
+                        self.results_viewer.adopt_table(
+                            pane_id, name=item.name, pin=True
+                        )
+                    self.results_viewer.show_table(did_run=False)
+            if item.sql is not None:
+                path = claim(item.sql, self.watch_dir)
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as e:
+                    self.notify(
+                        "Could not read %s: %s" % (path.name, e), severity="error"
+                    )
+                    continue
+                await self.editor_collection.action_new_buffer(
+                    state=BufferState(selection=Selection(), text=text, name=item.name)
+                )
+                # The buffer's file is the one in `opened/`, which is a real path
+                # something can save over -- and is what a `[commands]` entry with
+                # `stdin = "buffer"` hands on as HARLEQUIN_BUFFER_PATH.
+                self.editor_collection.remember_buffer_path(path)

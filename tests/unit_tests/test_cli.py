@@ -142,6 +142,7 @@ def test_default(
         catalog_side="left",
         catalog_min_width=120,
         catalog_exclude=(),
+        watch_dir=None,
         export_path=None,
         ssh_tunnel=None,
         # commands come from config, and the CLI reads them separately from
