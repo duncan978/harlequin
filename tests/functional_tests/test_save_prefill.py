@@ -61,8 +61,11 @@ async def test_saving_a_watched_query_offers_the_file_it_came_from(
     )
     async with app.run_test() as pilot:
         await _ready(app, pilot, wait_for_workers)
+        # `alt+i` opens the queue panel now (roadmap §8.3 proposal 28); Enter on
+        # the one item in it is what used to happen on the keypress alone.
         app.action_open_watched()
         await pilot.pause()
+        await pilot.press("enter")
         await wait_for_workers(app)
         await pilot.pause()
 

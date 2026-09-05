@@ -142,3 +142,42 @@ def test_a_fresh_csv_holds_back_the_sql_it_came_with(tmp_path: Path) -> None:
     os.utime(tmp_path / "pair.csv", (0, 0))
     (item,) = scan(tmp_path)
     assert item.sql is not None and item.csv is not None
+
+
+def test_scan_follows_a_symlinked_sql(tmp_path: Path) -> None:
+    """Roadmap §8.3 proposal 27: a file Duncan picked arrives as a symlink, not a
+    copy. `scan()` has to see it the same way it sees a real file -- `is_file()`
+    and `stat()` both follow a symlink to its target by default."""
+    origin_dir = tmp_path / "origin"
+    origin_dir.mkdir()
+    origin = origin_dir / "picked.sql"
+    origin.write_text("select 1")
+    when = origin.stat().st_mtime - 10
+    os.utime(origin, (when, when))
+    (tmp_path / "picked.sql").symlink_to(origin)
+
+    (item,) = scan(tmp_path)
+    assert item.name == "picked"
+    assert item.sql == tmp_path / "picked.sql"
+    assert item.sql.is_symlink()
+
+
+def test_claiming_a_symlink_moves_the_link_and_leaves_the_target(
+    tmp_path: Path,
+) -> None:
+    """`claim()` is `Path.replace`, which renames the symlink itself -- never the
+    file it points to. The origin has to survive being moved into `opened/`
+    under a name that is no longer where it was created."""
+    origin = tmp_path / "picked.sql"
+    origin.write_text("select 1")
+    link = tmp_path / "link_dir"
+    link.mkdir()
+    symlink = link / "q.sql"
+    symlink.symlink_to(origin)
+
+    moved = claim(symlink, link)
+    assert moved == opened_dir(link) / "q.sql"
+    assert moved.is_symlink()
+    assert moved.resolve() == origin.resolve()
+    assert origin.read_text() == "select 1"
+    assert origin.exists()

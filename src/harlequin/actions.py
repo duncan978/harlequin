@@ -111,6 +111,14 @@ HARLEQUIN_ACTIONS = {
         description="Open Watched Files",
         priority=True,
     ),
+    # Proposal 28: the same panel, opened with the newest item already
+    # highlighted. priority, for the same reason `open_watched` has it.
+    "open_watched_newest": Action(
+        target=None,
+        action="open_watched_newest",
+        description="Open Watched Files (Newest)",
+        priority=True,
+    ),
     "cancel_query": Action(
         target=None, action="cancel_query", description="Cancel Query"
     ),

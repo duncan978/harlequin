@@ -82,6 +82,7 @@ from harlequin.components.confirm_modal import ConfirmModal
 from harlequin.components.data_catalog import ContextMenu
 from harlequin.components.data_catalog.tree import HarlequinTree
 from harlequin.components.debug_info import AdapterDebugInfo, HarlequinDebugInfo
+from harlequin.components.watch_panel import WatchPanel
 from harlequin.config import (
     CommandConfig,
     get_highest_priority_existing_config_file,
@@ -107,7 +108,7 @@ from harlequin.plugins import load_keymap_plugins
 from harlequin.query import ExecutedStatement, ResultSet, RowLimit, execute, fetch
 from harlequin.statements import Statement
 from harlequin.transaction_mode import HarlequinTransactionMode
-from harlequin.watch import WatchedItem, claim, result_set_from_csv, scan
+from harlequin.watch import POLL_SECONDS, WatchedItem, claim, result_set_from_csv, scan
 
 if TYPE_CHECKING:
     from textual.await_complete import AwaitComplete
@@ -247,10 +248,6 @@ so their errors surface as a notification rather than an error modal.
 """
 
 
-WATCH_POLL_SECONDS = 2.0
-"""How often a `--watch-dir` is looked at. A poll nobody is waiting on."""
-
-
 def _harlequin_version() -> str:
     """What `HARLEQUIN_VERSION` tells a command it is talking to.
 
@@ -358,7 +355,7 @@ class Harlequin(AppBase):
         # Polled, not watched with an OS event: a poll is a dozen lines that behave the
         # same on every platform and over a network mount, and two seconds is not a
         # latency anyone is waiting on. The poll is a synchronous `stat()` of every
-        # entry in the directory, run on the event loop every WATCH_POLL_SECONDS, so
+        # entry in the directory, run on the event loop every POLL_SECONDS, so
         # it is not free on a directory with many files or a slow mount; and
         # `scan()`'s `min_age` compares a producer's mtime against this machine's
         # clock, so a producer on another host with a skewed clock can make a
@@ -591,7 +588,7 @@ class Harlequin(AppBase):
         self._load_catalog_cache()
         self.action_bind_keymaps(*self.keymap_names)
         if self.watch_dir is not None:
-            self.set_interval(WATCH_POLL_SECONDS, self._poll_watch_dir)
+            self.set_interval(POLL_SECONDS, self._poll_watch_dir)
             self._poll_watch_dir()
 
     @on(Button.Pressed, "#run_query")
@@ -2459,9 +2456,11 @@ class Harlequin(AppBase):
         screen: it gets a notification, and the user decides. Announced names are
         remembered so a poll every two seconds is not a toast every two seconds; a
         name that leaves the directory is forgotten, so the same query dropped
-        again is news again.
+        again is news again. Skipped while the queue panel is already open --
+        it is its own, livelier notice of the same thing, and a toast under it
+        would only repeat what the panel already says.
         """
-        if self.watch_dir is None:
+        if self.watch_dir is None or self._watch_panel_open():
             return
         items = scan(self.watch_dir)
         names = {item.name for item in items}
@@ -2476,82 +2475,150 @@ class Harlequin(AppBase):
             markup=False,
         )
 
-    def action_open_watched(self) -> None:
-        """Open everything the watched directory is holding."""
+    def _watch_panel_open(self) -> bool:
+        return any(isinstance(screen, WatchPanel) for screen in self.screen_stack)
+
+    def action_open_watched(self, jump_to_newest: bool = False) -> None:
+        """Open the queue panel: what is waiting, and what to do with each item.
+
+        Proposal 28 -- the panel is the persistent UI, and it is the only thing a
+        press of this key does now. Nothing opens, appends, pins or discards
+        itself; the panel just lists what `scan()` found and waits for a pick.
+        """
         if self.watch_dir is None:
             self.notify("No --watch-dir is set.", severity="warning")
             return
-        items = scan(self.watch_dir)
-        if not items:
+        if self._watch_panel_open():
+            return
+        if not scan(self.watch_dir):
             self.notify("Nothing waiting.")
             return
-        self.run_worker(self._open_watched(items), exclusive=False)
+        self.push_screen(WatchPanel(self.watch_dir, jump_to_newest=jump_to_newest))
 
-    async def _open_watched(self, items: list[WatchedItem]) -> None:
-        """One item at a time: the rows first, then the SQL that produced them.
+    def action_open_watched_newest(self) -> None:
+        """`alt+shift+i`: the same panel, opened straight to the newest item."""
+        self.action_open_watched(jump_to_newest=True)
 
-        The rows go in before the query so that focus ends on the editor, which is
-        where a person types next. A CSV that pyarrow cannot read costs its own
-        error and nothing else -- the query beside it still opens, because a broken
-        file is a poor reason to lose the SQL that came with it.
+    async def act_on_watched_item(self, item: WatchedItem, action: str) -> None:
+        """What the queue panel's four keys do, dispatched by name.
+
+        One coroutine per action rather than one branchy one, because each does a
+        different amount of the same three things -- claim, read, and show -- and
+        keeping them apart is what stops "handle everything" from creeping back
+        in as items get added.
+        """
+        self._watched_names.discard(item.name)
+        if item.csv_skipped is not None:
+            self.notify(item.csv_skipped, severity="warning")
+        if action == "open":
+            await self._open_one_watched_item(item)
+        elif action == "append":
+            await self._append_one_watched_item(item)
+        elif action == "pin":
+            await self._pin_one_watched_item(item)
+        elif action == "discard":
+            await self._discard_one_watched_item(item)
+
+    async def _pin_csv(self, item: WatchedItem, watch_dir: Path) -> None:
+        """Claim `item.csv`, read it, and show it as a named, pinned result tab.
+
+        Shared by "open" and "append": both bring an item's rows in the same way,
+        and only differ in what they do with its SQL.
+        """
+        if item.csv is None:
+            return
+        loop = asyncio.get_running_loop()
+        path = claim(item.csv, watch_dir)
+        try:
+            result = await loop.run_in_executor(
+                None, partial(result_set_from_csv, path, max_rows=self.viewer_max_rows)
+            )
+        except Exception as e:  # noqa: BLE001 -- pyarrow raises many things
+            self.notify("Could not read %s: %s" % (path.name, e), severity="error")
+            return
+        self._watched_tables += 1
+        await self.results_viewer.push_table(
+            table_id="watched-%d" % self._watched_tables, result=result
+        )
+        pane_id = self.results_viewer.last_pushed
+        if pane_id is not None:
+            self.results_viewer.adopt_table(pane_id, name=item.name, pin=True)
+        self.results_viewer.show_table(did_run=False)
+
+    async def _open_one_watched_item(self, item: WatchedItem) -> None:
+        """The rows first, then the SQL as a new buffer -- what `alt+i` used to do
+        to everything at once, now done to the one item Enter was pressed on.
 
         Each file is *claimed* (moved to `opened/`) before it is read, so a failure
         cannot leave the same file to be offered again on every poll: it is in
         `opened/`, under its own name, and the error says which one it was.
-
-        The two reads pyarrow and `Path.read_text` do are genuinely blocking, so
-        each runs in the default executor rather than on this coroutine's own
-        thread -- the event loop, and the cancel key, stay live while a large file
-        is read.
         """
         watch_dir = self.watch_dir
         if watch_dir is None:
             return
+        await self._pin_csv(item, watch_dir)
+        if item.sql is None:
+            return
         loop = asyncio.get_running_loop()
-        for item in items:
-            self._watched_names.discard(item.name)
-            if item.csv_skipped is not None:
-                self.notify(item.csv_skipped, severity="warning")
-            if item.csv is not None:
-                path = claim(item.csv, watch_dir)
-                try:
-                    result = await loop.run_in_executor(
-                        None,
-                        partial(
-                            result_set_from_csv, path, max_rows=self.viewer_max_rows
-                        ),
-                    )
-                except Exception as e:  # noqa: BLE001 -- pyarrow raises many things
-                    self.notify(
-                        "Could not read %s: %s" % (path.name, e), severity="error"
-                    )
-                    result = None
-                if result is not None:
-                    self._watched_tables += 1
-                    await self.results_viewer.push_table(
-                        table_id="watched-%d" % self._watched_tables, result=result
-                    )
-                    pane_id = self.results_viewer.last_pushed
-                    if pane_id is not None:
-                        self.results_viewer.adopt_table(
-                            pane_id, name=item.name, pin=True
-                        )
-                    self.results_viewer.show_table(did_run=False)
-            if item.sql is not None:
-                path = claim(item.sql, watch_dir)
-                try:
-                    text = await loop.run_in_executor(
-                        None, partial(path.read_text, encoding="utf-8")
-                    )
-                except (OSError, UnicodeDecodeError) as e:
-                    self.notify(
-                        "Could not read %s: %s" % (path.name, e), severity="error"
-                    )
-                    continue
-                await self.editor_collection.action_new_buffer(
-                    state=BufferState(selection=Selection(), text=text, name=item.name)
-                )
-                # The buffer's file is the one in `opened/`, which is a real path
-                # something can save over -- and is what a `[commands]` entry with
-                # `stdin = "buffer"` hands on as HARLEQUIN_BUFFER_PATH.
-                self.editor_collection.remember_buffer_path(path)
+        path = claim(item.sql, watch_dir)
+        try:
+            text = await loop.run_in_executor(
+                None, partial(path.read_text, encoding="utf-8")
+            )
+        except (OSError, UnicodeDecodeError) as e:
+            self.notify("Could not read %s: %s" % (path.name, e), severity="error")
+            return
+        await self.editor_collection.action_new_buffer(
+            state=BufferState(selection=Selection(), text=text, name=item.name)
+        )
+        # The buffer's path is the one to write back to, and that is the item's
+        # *origin* when it has one (roadmap §8.3 proposal 27) -- a real file
+        # Duncan picked, symlinked into the queue rather than copied. `claim()`
+        # moves the symlink itself into `opened/` and leaves the target alone, so
+        # resolving it here is what makes `ctrl+s` write through to that file
+        # instead of over the moved symlink: unresolved, the remembered path is
+        # the symlink under `opened/`, and an atomic save replaces *that* --
+        # silently breaking the link rather than writing the origin. A copy (no
+        # origin, nothing to resolve) is unaffected either way.
+        self.editor_collection.remember_buffer_path(
+            path.resolve() if path.is_symlink() else path
+        )
+
+    async def _append_one_watched_item(self, item: WatchedItem) -> None:
+        """The rows as a pinned tab, the SQL as a `-- ##` section in the buffer
+        already open -- item 14's co-working shape, joining rather than opening."""
+        watch_dir = self.watch_dir
+        if watch_dir is None:
+            return
+        await self._pin_csv(item, watch_dir)
+        if item.sql is None:
+            return
+        loop = asyncio.get_running_loop()
+        path = claim(item.sql, watch_dir)
+        try:
+            text = await loop.run_in_executor(
+                None, partial(path.read_text, encoding="utf-8")
+            )
+        except (OSError, UnicodeDecodeError) as e:
+            self.notify("Could not read %s: %s" % (path.name, e), severity="error")
+            return
+        self.editor_collection.append_section(item.name, text)
+
+    async def _pin_one_watched_item(self, item: WatchedItem) -> None:
+        """Just the rows, pinned -- the SQL waits for its own Enter or `a` later."""
+        watch_dir = self.watch_dir
+        if watch_dir is None:
+            return
+        if item.csv is None:
+            self.notify("%s has no result to pin." % item.name, severity="warning")
+            return
+        await self._pin_csv(item, watch_dir)
+
+    async def _discard_one_watched_item(self, item: WatchedItem) -> None:
+        """Claimed and dropped, unread -- moved to `opened/` like every other pick,
+        so it is not offered again, and nothing about it ever reaches the screen."""
+        watch_dir = self.watch_dir
+        if watch_dir is None:
+            return
+        for path in item.paths:
+            claim(path, watch_dir)

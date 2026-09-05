@@ -1,8 +1,9 @@
 """`--watch-dir`, through the app: what is offered, what opens, and what moves.
 
-`tests/unit_tests/test_watch.py` owns the scanner. These drive the front end:
-nothing opens on its own, and when the key is pressed the SQL is a buffer and the
-CSV is a named, pinned result tab.
+`tests/unit_tests/test_watch.py` owns the scanner. These drive the front end: since
+proposal 28 (roadmap §8.3), `alt+i` opens the queue panel and *never* opens a file by
+itself -- Enter, `a`, `p` and `d` inside the panel are what do, and only to the one
+item under the highlight.
 """
 
 from __future__ import annotations
@@ -12,9 +13,11 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 import pytest
+from textual.widgets import OptionList
 
 from harlequin import Harlequin
 from harlequin.adapter import HarlequinAdapter
+from harlequin.components.watch_panel import WatchList, WatchPanel
 from harlequin.watch import opened_dir
 
 
@@ -42,6 +45,13 @@ async def _ready(app: Harlequin, pilot, wait_for_workers) -> None:
         await pilot.pause()
 
 
+def _panel(app: Harlequin) -> WatchPanel | None:
+    for screen in app.screen_stack:
+        if isinstance(screen, WatchPanel):
+            return screen
+    return None
+
+
 @pytest.mark.asyncio
 async def test_what_is_waiting_is_announced_and_nothing_is_opened(
     duckdb_adapter: type[HarlequinAdapter],
@@ -67,7 +77,30 @@ async def test_what_is_waiting_is_announced_and_nothing_is_opened(
 
 
 @pytest.mark.asyncio
-async def test_the_key_opens_the_sql_as_a_buffer_and_the_csv_as_a_pinned_tab(
+async def test_the_key_opens_the_panel_not_the_file(
+    duckdb_adapter: type[HarlequinAdapter],
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+) -> None:
+    _drop(tmp_path, "carrier-mix.sql", "select 1 as one")
+    app = _watching(duckdb_adapter, tmp_path)
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("alt+i")
+        await pilot.pause()
+
+        panel = _panel(app)
+        assert panel is not None
+        assert [item.name for item in panel.query_one(WatchList).items] == [
+            "carrier-mix"
+        ]
+        # the panel shows it; nothing has opened or moved on its own
+        assert app.editor_collection.tabs.tab_count == 1
+        assert (tmp_path / "carrier-mix.sql").exists()
+
+
+@pytest.mark.asyncio
+async def test_enter_opens_the_sql_as_a_buffer_and_the_csv_as_a_pinned_tab(
     duckdb_adapter: type[HarlequinAdapter],
     wait_for_workers: Callable[[Harlequin], Awaitable[None]],
     tmp_path: Path,
@@ -78,6 +111,8 @@ async def test_the_key_opens_the_sql_as_a_buffer_and_the_csv_as_a_pinned_tab(
     async with app.run_test() as pilot:
         await _ready(app, pilot, wait_for_workers)
         await pilot.press("alt+i")
+        await pilot.pause()
+        await pilot.press("enter")
         await wait_for_workers(app)
         await pilot.pause()
 
@@ -97,13 +132,15 @@ async def test_the_key_opens_the_sql_as_a_buffer_and_the_csv_as_a_pinned_tab(
         assert table.plain_column_labels == ["carrier", "quotes"]
         assert table.row_count == 2
 
-        # both files moved, so the directory has nothing left to offer
+        # both files moved, so the directory has nothing left to offer, and the
+        # panel closed itself once scan() came back empty
         assert not (tmp_path / "carrier-mix.sql").exists()
         assert not (tmp_path / "carrier-mix.csv").exists()
         assert sorted(p.name for p in opened_dir(tmp_path).iterdir()) == [
             "carrier-mix.csv",
             "carrier-mix.sql",
         ]
+        assert _panel(app) is None
 
 
 @pytest.mark.asyncio
@@ -118,6 +155,8 @@ async def test_a_csv_that_cannot_be_read_costs_only_itself(
     async with app.run_test() as pilot:
         await _ready(app, pilot, wait_for_workers)
         await pilot.press("alt+i")
+        await pilot.pause()
+        await pilot.press("enter")
         await wait_for_workers(app)
         await pilot.pause()
         assert any(
@@ -133,6 +172,150 @@ async def test_a_csv_that_cannot_be_read_costs_only_itself(
 
 
 @pytest.mark.asyncio
+async def test_a_appends_the_sql_as_a_section_and_still_pins_the_rows(
+    duckdb_adapter: type[HarlequinAdapter],
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+) -> None:
+    """Item 14's co-working shape: the query joins the buffer already open."""
+    _drop(tmp_path, "carrier-mix.sql", "select carrier from quotes")
+    _drop(tmp_path, "carrier-mix.csv", "carrier,quotes\nA,10\nB,20\n")
+    app = _watching(duckdb_adapter, tmp_path)
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        app.editor.text = "select 1 -- what I was already doing"
+        tab_count_before = app.editor_collection.tabs.tab_count
+
+        await pilot.press("alt+i")
+        await pilot.pause()
+        await pilot.press("a")
+        await wait_for_workers(app)
+        await pilot.pause()
+
+        # no new tab -- it joined the one already open
+        assert app.editor_collection.tabs.tab_count == tab_count_before
+        assert "select 1 -- what I was already doing" in app.editor.text
+        assert "-- ## carrier-mix" in app.editor.text
+        assert "select carrier from quotes" in app.editor.text
+
+        # the rows still arrived, pinned
+        pane_id = app.results_viewer.last_pushed
+        assert pane_id is not None
+        assert pane_id in app.results_viewer.pinned_pane_ids()
+
+        assert not (tmp_path / "carrier-mix.sql").exists()
+        assert not (tmp_path / "carrier-mix.csv").exists()
+
+
+@pytest.mark.asyncio
+async def test_p_pins_only_the_rows_and_leaves_the_sql_waiting(
+    duckdb_adapter: type[HarlequinAdapter],
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+) -> None:
+    _drop(tmp_path, "carrier-mix.sql", "select carrier from quotes")
+    _drop(tmp_path, "carrier-mix.csv", "carrier,quotes\nA,10\nB,20\n")
+    app = _watching(duckdb_adapter, tmp_path)
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("alt+i")
+        await pilot.pause()
+        await pilot.press("p")
+        await wait_for_workers(app)
+        await pilot.pause()
+
+        pane_id = app.results_viewer.last_pushed
+        assert pane_id is not None
+        assert pane_id in app.results_viewer.pinned_pane_ids()
+
+        # the rows are gone; the SQL is still there, waiting for its own pick
+        assert not (tmp_path / "carrier-mix.csv").exists()
+        assert (tmp_path / "carrier-mix.sql").exists()
+        assert app.editor_collection.tabs.tab_count == 1
+        panel = _panel(app)
+        assert panel is not None
+        assert [item.name for item in panel.query_one(WatchList).items] == [
+            "carrier-mix"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_p_with_nothing_to_pin_warns_and_does_not_close_the_item(
+    duckdb_adapter: type[HarlequinAdapter],
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+) -> None:
+    _drop(tmp_path, "sql-only.sql", "select 1")
+    app = _watching(duckdb_adapter, tmp_path)
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("alt+i")
+        await pilot.pause()
+        await pilot.press("p")
+        await wait_for_workers(app)
+        await pilot.pause()
+        assert any(
+            "no result to pin" in n.message and n.severity == "warning"
+            for n in app._notifications
+        )
+        assert (tmp_path / "sql-only.sql").exists()
+
+
+@pytest.mark.asyncio
+async def test_d_discards_without_opening_anything(
+    duckdb_adapter: type[HarlequinAdapter],
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+) -> None:
+    _drop(tmp_path, "carrier-mix.sql", "select carrier from quotes")
+    _drop(tmp_path, "carrier-mix.csv", "carrier,quotes\nA,10\nB,20\n")
+    app = _watching(duckdb_adapter, tmp_path)
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("alt+i")
+        await pilot.pause()
+        await pilot.press("d")
+        await wait_for_workers(app)
+        await pilot.pause()
+
+        assert app.editor.text == ""
+        assert app.editor_collection.tabs.tab_count == 1
+        assert app.results_viewer.last_pushed is None
+        assert not (tmp_path / "carrier-mix.sql").exists()
+        assert not (tmp_path / "carrier-mix.csv").exists()
+        assert sorted(p.name for p in opened_dir(tmp_path).iterdir()) == [
+            "carrier-mix.csv",
+            "carrier-mix.sql",
+        ]
+        # nothing left to decide about, so the panel closed itself
+        assert _panel(app) is None
+
+
+@pytest.mark.asyncio
+async def test_alt_shift_i_opens_the_panel_on_the_newest_item(
+    duckdb_adapter: type[HarlequinAdapter],
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+) -> None:
+    _drop(tmp_path, "second.sql", "select 2")
+    os.utime(tmp_path / "second.sql", (0, 60))
+    _drop(tmp_path, "first.sql", "select 1")
+    os.utime(tmp_path / "first.sql", (0, 10))
+    app = _watching(duckdb_adapter, tmp_path)
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("alt+shift+i")
+        await pilot.pause()
+
+        panel = _panel(app)
+        assert panel is not None
+        watch_list = panel.query_one(WatchList)
+        assert [item.name for item in watch_list.items] == ["first", "second"]
+        option_list = watch_list.query_one(OptionList)
+        assert option_list.highlighted == 1  # "second" is the newest
+
+
+@pytest.mark.asyncio
 async def test_the_key_with_nothing_waiting_says_nothing_is(
     duckdb_adapter: type[HarlequinAdapter],
     wait_for_workers: Callable[[Harlequin], Awaitable[None]],
@@ -144,6 +327,7 @@ async def test_the_key_with_nothing_waiting_says_nothing_is(
         await pilot.press("alt+i")
         await pilot.pause()
         assert "Nothing waiting." in [n.message for n in app._notifications]
+        assert _panel(app) is None
 
 
 @pytest.mark.asyncio
@@ -157,3 +341,38 @@ async def test_without_the_option_the_poll_never_runs(
         await pilot.press("alt+i")
         await pilot.pause()
         assert "No --watch-dir is set." in [n.message for n in app._notifications]
+
+
+@pytest.mark.asyncio
+async def test_a_symlinked_item_remembers_the_origin_not_the_moved_link(
+    duckdb_adapter: type[HarlequinAdapter],
+    wait_for_workers: Callable[[Harlequin], Awaitable[None]],
+    tmp_path: Path,
+) -> None:
+    """Roadmap §8.3 proposal 27: `ctrl+s` has to write through to the file Duncan
+    picked, not over the symlink `claim()` moved into `opened/`. Unresolved, the
+    remembered path is that moved symlink, and a save there replaces the link with
+    a plain file -- breaking it silently rather than writing the origin."""
+    origin_dir = tmp_path / "origin"
+    origin_dir.mkdir()
+    origin = origin_dir / "picked.sql"
+    origin.write_text("select 1")
+    when = origin.stat().st_mtime - 10
+    os.utime(origin, (when, when))
+    watch_dir = tmp_path / "watch"
+    watch_dir.mkdir()
+    (watch_dir / "picked.sql").symlink_to(origin)
+    os.utime(watch_dir / "picked.sql", (when, when), follow_symlinks=False)
+
+    app = _watching(duckdb_adapter, watch_dir)
+    async with app.run_test() as pilot:
+        await _ready(app, pilot, wait_for_workers)
+        await pilot.press("alt+i")
+        await pilot.pause()
+        await pilot.press("enter")
+        await wait_for_workers(app)
+        await pilot.pause()
+
+        path = app.editor_collection.active_buffer_path()
+        assert path == origin
+        assert not path.is_symlink()

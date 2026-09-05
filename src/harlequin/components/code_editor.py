@@ -874,6 +874,36 @@ class EditorCollection(Vertical):
         self.editor.text_input.scroll_cursor_visible(center=True, animate=False)
         self.editor.focus()
 
+    def append_section(self, name: str, sql: str) -> None:
+        """Append `sql` to the active buffer as a new `-- ## name` section, and
+        put the cursor on it.
+
+        The co-working shape §8.2b item 14 asked for: a query arriving from
+        elsewhere (the watched-directory queue panel's `a`) joins the buffer
+        Duncan is already in, rather than opening in a tab of its own, so
+        `ctrl+d` (run section) can run it in place from there. A blank line
+        separates it from whatever came before, unless the buffer is empty or
+        already ends in one -- the same rule a person adding a section by hand
+        would follow. Appended last, so it is always the last section `splice`
+        leaves behind -- no offset arithmetic needed to find it again.
+        """
+        if self.editor.text_input is None:
+            return
+        text = self.editor.text
+        body = sql if sql.endswith("\n") else sql + "\n"
+        if not text or text.endswith("\n\n"):
+            padding = ""
+        elif text.endswith("\n"):
+            padding = "\n"
+        else:
+            padding = "\n\n"
+        addition = "%s-- ## %s\n%s" % (padding, name, body)
+        new_text, _ = splice(text, (len(text), len(text)), addition)
+        self.editor.text = new_text
+        sections = find_sections(new_text)
+        if sections:
+            self.jump_to_section(sections[-1])
+
     def run_section(self, section: Section) -> None:
         """Select the section's SQL and submit it.
 

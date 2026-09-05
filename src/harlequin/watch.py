@@ -44,6 +44,11 @@ from harlequin.statements import Statement
 SUFFIXES = (".sql", ".csv")
 """What the watcher opens. Everything else in the directory is not its business."""
 
+POLL_SECONDS = 2.0
+"""How often a `--watch-dir` is looked at, by the app's own toast and by the queue
+panel's (`WatchPanel`) refresh alike. A poll nobody is waiting on -- both readers
+share one constant so they cannot drift apart."""
+
 MIN_AGE = 0.5
 """Seconds an item has to go unchanged before it is offered.
 

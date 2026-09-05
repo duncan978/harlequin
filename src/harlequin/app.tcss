@@ -764,15 +764,59 @@ DataCatalog ColumnList {
     padding: 0 1;
 }
 
-/* COLUMNS MODAL, and the SECTION NAVIGATOR, which is the same shape */
+/* WATCH LIST (the queue panel, proposal 28): the same list-and-footer shape as
+   ColumnList and SectionList, minus the filter row -- a handful of waiting
+   items does not need one. */
+WatchList {
+    height: 1fr;
+    width: 1fr;
+    padding: 0;
+}
+
+WatchList .watch_list_options {
+    background: $background;
+    background-tint: $background;
+    border: round $border-color-nofocus;
+    border-title-color: $border-title-color-nofocus;
+    height: 1fr;
+    width: 100%;
+    padding: 0;
+}
+
+WatchList:focus-within .watch_list_options {
+    border: round $border-color-focus;
+    border-title-color: $border-title-color-focus;
+}
+
+WatchList .watch_list_options > .option-list--option-highlighted {
+    background: $secondary;
+    color: auto;
+    text-style: none;
+}
+
+WatchList .watch_list_options > .option-list--option-hover {
+    color: $text;
+    background: $boost;
+}
+
+WatchList .watch_list_footer {
+    dock: bottom;
+    color: $text-muted;
+    margin: 1 0 0 0;
+    padding: 0 1;
+}
+
+/* COLUMNS MODAL, the SECTION NAVIGATOR and the QUEUE PANEL, all the same shape */
 ColumnsModal,
-SectionsModal {
+SectionsModal,
+WatchPanel {
     align: center middle;
     padding: 0;
 }
 
 ColumnsModal #modal_outer,
-SectionsModal #modal_outer {
+SectionsModal #modal_outer,
+WatchPanel #modal_outer {
     margin: 2 4;
     width: 70%;
     max-width: 88;

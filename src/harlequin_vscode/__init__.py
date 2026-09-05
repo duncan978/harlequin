@@ -16,6 +16,11 @@ VSCODE_APP_BINDINGS = [
     # two-spelling treatment as the section keys below -- a CSI-u chord and one a
     # terminal cannot lose.
     HarlequinKeyBinding("ctrl+shift+i,alt+i", "open_watched"),
+    # Straight to the newest item in the same panel. Measured free through
+    # Ghostty + tmux the same day alt+i was (roadmap §8.3 proposal 28) -- but
+    # unlike alt+i, that measurement was of the *chord*, not of this binding
+    # in place; run `ale-keys --probe` on it before trusting it further.
+    HarlequinKeyBinding("alt+shift+i", "open_watched_newest"),
     HarlequinKeyBinding("ctrl+e", "show_data_exporter"),
     HarlequinKeyBinding("ctrl+r", "refresh_catalog"),
     HarlequinKeyBinding("tab", "focus_next"),
