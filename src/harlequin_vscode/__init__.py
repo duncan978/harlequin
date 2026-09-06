@@ -16,11 +16,13 @@ VSCODE_APP_BINDINGS = [
     # two-spelling treatment as the section keys below -- a CSI-u chord and one a
     # terminal cannot lose.
     HarlequinKeyBinding("ctrl+shift+i,alt+i", "open_watched"),
-    # Straight to the newest item in the same panel. Measured free through
-    # Ghostty + tmux the same day alt+i was (roadmap §8.3 proposal 28) -- but
-    # unlike alt+i, that measurement was of the *chord*, not of this binding
-    # in place; run `ale-keys --probe` on it before trusting it further.
-    HarlequinKeyBinding("alt+shift+i", "open_watched_newest"),
+    # Straight to the newest item in the same panel. Was `alt+shift+i` (roadmap
+    # §8.3 proposal 28); measured FAILING 2026-09-06 (`ale-keys --probe shift`,
+    # UAT'd against +insurify.23) -- shift is dropped over an alt chord the same
+    # way it is over ctrl+shift, so it arrived indistinguishable from plain
+    # alt+i and this action could never fire. `alt+j` measured free the same
+    # session and is unused elsewhere in the app.
+    HarlequinKeyBinding("alt+j", "open_watched_newest"),
     HarlequinKeyBinding("ctrl+e", "show_data_exporter"),
     HarlequinKeyBinding("ctrl+r", "refresh_catalog"),
     HarlequinKeyBinding("tab", "focus_next"),

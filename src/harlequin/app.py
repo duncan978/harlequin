@@ -2496,7 +2496,7 @@ class Harlequin(AppBase):
         self.push_screen(WatchPanel(self.watch_dir, jump_to_newest=jump_to_newest))
 
     def action_open_watched_newest(self) -> None:
-        """`alt+shift+i`: the same panel, opened straight to the newest item."""
+        """`alt+j`: the same panel, opened straight to the newest item."""
         self.action_open_watched(jump_to_newest=True)
 
     async def act_on_watched_item(self, item: WatchedItem, action: str) -> None:

@@ -292,7 +292,7 @@ async def test_d_discards_without_opening_anything(
 
 
 @pytest.mark.asyncio
-async def test_alt_shift_i_opens_the_panel_on_the_newest_item(
+async def test_alt_j_opens_the_panel_on_the_newest_item(
     duckdb_adapter: type[HarlequinAdapter],
     wait_for_workers: Callable[[Harlequin], Awaitable[None]],
     tmp_path: Path,
@@ -304,7 +304,7 @@ async def test_alt_shift_i_opens_the_panel_on_the_newest_item(
     app = _watching(duckdb_adapter, tmp_path)
     async with app.run_test() as pilot:
         await _ready(app, pilot, wait_for_workers)
-        await pilot.press("alt+shift+i")
+        await pilot.press("alt+j")
         await pilot.pause()
 
         panel = _panel(app)
