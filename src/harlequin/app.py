@@ -311,6 +311,7 @@ class Harlequin(AppBase):
         catalog_min_width: int | str | None = None,
         catalog_exclude: Sequence[str] | str | None = None,
         watch_dir: Path | str | None = None,
+        cache_name: str | None = None,
         export_path: Path | str | None = None,
         viewer_max_rows: int | str | None = 100_000,
         query_limit: int | str | None = None,
@@ -361,6 +362,9 @@ class Harlequin(AppBase):
         # clock, so a producer on another host with a skewed clock can make a
         # settled file wait longer than MIN_AGE, or shorter, rather than exactly that.
         self.watch_dir = Path(watch_dir).expanduser() if watch_dir else None
+        self.cache_name = cache_name
+        """Which named set of saved buffers this instance uses; None is the
+        one cache every Harlequin shared before this option existed."""
         self._watched_names: set[str] = set()
         """Names already announced, so a poll does not re-announce what is waiting."""
         self._watched_tables = 0
@@ -493,7 +497,7 @@ class Harlequin(AppBase):
             catalog_exclude=self.catalog_exclude,
         )
         self.editor_collection = EditorCollection(
-            language="sql", classes="hide-tabs"
+            language="sql", classes="hide-tabs", cache_name=self.cache_name
         ).data_bind(Harlequin.theme)
         self.editor_collection.add_class("premount")
         self.editor: CodeEditor | None = None
@@ -1413,7 +1417,8 @@ class Harlequin(AppBase):
             Cache(
                 focus_index=self.editor_collection.active_buffer_index,
                 buffers=self.editor_collection.buffers,
-            )
+            ),
+            cache_name=self.cache_name,
         )
         update_catalog_cache(
             connection_hash=self.connection_hash,

@@ -32,8 +32,10 @@ def no_use_buffer_cache(
 ) -> None:
     if "use_cache" in request.keywords:
         return
-    monkeypatch.setattr("harlequin.components.code_editor.load_cache", lambda: None)
-    monkeypatch.setattr("harlequin.app.write_editor_cache", lambda *_: None)
+    monkeypatch.setattr(
+        "harlequin.components.code_editor.load_cache", lambda *a, **kw: None
+    )
+    monkeypatch.setattr("harlequin.app.write_editor_cache", lambda *a, **kw: None)
 
 
 @pytest.fixture(autouse=True)

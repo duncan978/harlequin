@@ -23,7 +23,9 @@ def no_startup_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """A bare `EditorCollection()` restores whatever this machine's real
     Harlequin cache holds -- fine for the app, which always starts from one,
     but not for a test that wants to know its buffer starts empty."""
-    monkeypatch.setattr("harlequin.components.code_editor.load_cache", lambda: None)
+    monkeypatch.setattr(
+        "harlequin.components.code_editor.load_cache", lambda *a, **kw: None
+    )
 
 
 @pytest.mark.asyncio

@@ -500,6 +500,7 @@ class EditorCollection(Vertical):
         disabled: bool = False,
         language: str = "sql",
         theme: str = "harlequin",
+        cache_name: Union[str, None] = None,
     ):
         super().__init__(
             name=name,
@@ -512,7 +513,14 @@ class EditorCollection(Vertical):
         self._word_completer: WordCompleter | None = None
         self._member_completer: MemberCompleter | None = None
         self._buffer_symbols: BufferSymbols = NO_SYMBOLS
-        self.startup_cache = load_cache()
+        self.cache_name = cache_name
+        """Which named set of saved buffers this instance loads and restores.
+
+        None is every Harlequin that never asked for a name -- the one shared
+        cache this app has always had. A name keeps this instance's buffers
+        apart from every other name's, including the unnamed one's.
+        """
+        self.startup_cache = load_cache(cache_name=cache_name)
         self.buffer_states: dict[str, EditorState] = {}
         # kept beside the states rather than inside them: `_save_loaded_buffer`
         # replaces a state wholesale on every tab switch, which would take the

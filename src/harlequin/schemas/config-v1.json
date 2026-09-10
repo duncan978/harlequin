@@ -332,6 +332,9 @@
         },
         "watch_dir": {
           "description": "Read by the harlequin IDE; hsql ignores it. See `harlequin --help`."
+        },
+        "cache_name": {
+          "description": "Read by the harlequin IDE; hsql ignores it. See `harlequin --help`."
         }
       }
     },

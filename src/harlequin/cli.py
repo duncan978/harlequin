@@ -545,6 +545,15 @@ def build_cli(argv: Sequence[str]) -> click.Command:
         ),
     )
     @click.option(
+        "--cache-name",
+        help=(
+            "Which set of saved query buffers this instance keeps and restores. "
+            "Omit it and Harlequin behaves exactly as it always has, sharing the "
+            "one cache every instance shares by default. Give two instances "
+            "different names and each keeps its own buffers, never the other's."
+        ),
+    )
+    @click.option(
         "--catalog-exclude",
         multiple=True,
         help=(
@@ -697,6 +706,7 @@ def build_cli(argv: Sequence[str]) -> click.Command:
         catalog_side: str = config.pop("catalog_side", None) or "left"
         catalog_exclude = config.pop("catalog_exclude", None) or ()
         watch_dir = config.pop("watch_dir", None)
+        cache_name: str | None = config.pop("cache_name", None)
         catalog_min_width = config.pop("catalog_min_width", None)
         if catalog_min_width is None:
             catalog_min_width = DEFAULT_CATALOG_MIN_WIDTH
@@ -769,6 +779,7 @@ def build_cli(argv: Sequence[str]) -> click.Command:
                 catalog_min_width=catalog_min_width,
                 catalog_exclude=catalog_exclude,
                 watch_dir=watch_dir,
+                cache_name=cache_name,
                 export_path=export_path,
                 ssh_tunnel=tunnel,
                 commands=commands,
